@@ -19,6 +19,17 @@ MVSS_EPOCHS="${MVSS_EPOCHS:-${GLOBAL_EPOCHS:-100}}"
 PSCC_EPOCHS="${PSCC_EPOCHS:-${GLOBAL_EPOCHS:-25}}"
 SPAN_EPOCHS="${SPAN_EPOCHS:-${GLOBAL_EPOCHS:-500}}"
 MANTRA_EPOCHS="${MANTRA_EPOCHS:-${GLOBAL_EPOCHS:-100}}"
+EARLY_STOP_MIN_DELTA="${EARLY_STOP_MIN_DELTA:-0.0001}"
+CAT_EARLY_STOP_MIN_EPOCHS="${CAT_EARLY_STOP_MIN_EPOCHS:-20}"
+CAT_EARLY_STOP_PATIENCE="${CAT_EARLY_STOP_PATIENCE:-12}"
+MVSS_EARLY_STOP_MIN_EPOCHS="${MVSS_EARLY_STOP_MIN_EPOCHS:-15}"
+MVSS_EARLY_STOP_PATIENCE="${MVSS_EARLY_STOP_PATIENCE:-10}"
+PSCC_EARLY_STOP_MIN_EPOCHS="${PSCC_EARLY_STOP_MIN_EPOCHS:-8}"
+PSCC_EARLY_STOP_PATIENCE="${PSCC_EARLY_STOP_PATIENCE:-6}"
+SPAN_EARLY_STOP_MIN_EPOCHS="${SPAN_EARLY_STOP_MIN_EPOCHS:-25}"
+SPAN_EARLY_STOP_PATIENCE="${SPAN_EARLY_STOP_PATIENCE:-15}"
+MANTRA_EARLY_STOP_MIN_EPOCHS="${MANTRA_EARLY_STOP_MIN_EPOCHS:-15}"
+MANTRA_EARLY_STOP_PATIENCE="${MANTRA_EARLY_STOP_PATIENCE:-10}"
 WORKERS="${WORKERS:-8}"
 CAT_WORKERS="${CAT_WORKERS:-4}"
 SPAN_WORKERS="${SPAN_WORKERS:-4}"
@@ -236,7 +247,8 @@ train_adaptive \
   "catnet" \
   "${CAT_PROFILES:-512,22,0.005,4;512,22,0.005,2;512,16,0.005,4;512,16,0.005,2;512,11,0.005,4;512,11,0.005,2;512,8,0.005,4;512,8,0.005,2;512,4,0.005,2;512,4,0.005,0;384,8,0.005,4;384,4,0.005,2;256,8,0.005,4;256,4,0.005,2}" \
   "$CAT_EPOCHS" \
-  "$CAT_WORKERS"
+  "$CAT_WORKERS" \
+  "--early-stop-min-epochs $CAT_EARLY_STOP_MIN_EPOCHS --early-stop-patience $CAT_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
 cat_img="$(selected_field CAT-Net 1)"
 cat_dir="$(selected_field CAT-Net 4)"
 predict_and_eval "CAT-Net" "${CAT_ENV:-}" "$ROOT/CAT-Net/CAT-Net-main" "tools/predict_lzb.py" "--model-file" "$cat_dir/best.pth.tar" "$cat_img"
@@ -248,7 +260,8 @@ train_adaptive \
   "mvssnet" \
   "512,8,0.0001;512,4,0.0001;512,2,0.0001;512,1,0.0001;384,8,0.0001;384,4,0.0001;256,8,0.0001;256,4,0.0001" \
   "$MVSS_EPOCHS" \
-  "$WORKERS"
+  "$WORKERS" \
+  "--early-stop-min-epochs $MVSS_EARLY_STOP_MIN_EPOCHS --early-stop-patience $MVSS_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
 mvss_img="$(selected_field MVSS-Net 1)"
 mvss_dir="$(selected_field MVSS-Net 4)"
 predict_and_eval "MVSS-Net" "${MVSS_ENV:-}" "$ROOT/MVSS-Net/MVSS-Net-master" "predict_lzb.py" "--model-file" "$mvss_dir/best.pth" "$mvss_img"
@@ -260,7 +273,8 @@ train_adaptive \
   "psccnet" \
   "256,10,0.0002;256,8,0.0002;256,4,0.0002;256,2,0.0002;256,1,0.0002" \
   "$PSCC_EPOCHS" \
-  "$WORKERS"
+  "$WORKERS" \
+  "--early-stop-min-epochs $PSCC_EARLY_STOP_MIN_EPOCHS --early-stop-patience $PSCC_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
 pscc_img="$(selected_field PSCC-Net 1)"
 pscc_dir="$(selected_field PSCC-Net 4)"
 predict_and_eval "PSCC-Net" "${PSCC_ENV:-}" "$ROOT/PSCC-Net/PSCC-Net-main" "predict_lzb.py" "--checkpoint-dir" "$pscc_dir" "$pscc_img"
@@ -270,9 +284,10 @@ train_adaptive \
   "${SPAN_ENV:-}" \
   "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main/train_lzb.py" \
   "span" \
-  "512,1,0.0001;384,1,0.0001;256,1,0.0001" \
+  "${SPAN_PROFILES:-512,2,0.0001;512,1,0.0001;384,2,0.0001;384,1,0.0001;256,2,0.0001;256,1,0.0001}" \
   "$SPAN_EPOCHS" \
-  "$SPAN_WORKERS"
+  "$SPAN_WORKERS" \
+  "--early-stop-min-epochs $SPAN_EARLY_STOP_MIN_EPOCHS --early-stop-patience $SPAN_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
 span_img="$(selected_field IRIS0-SPAN 1)"
 span_dir="$(selected_field IRIS0-SPAN 4)"
 predict_and_eval "IRIS0-SPAN" "${SPAN_ENV:-}" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main" "predict_lzb.py" "--model-file" "$span_dir/best.h5" "$span_img"
@@ -282,9 +297,10 @@ train_adaptive \
   "${MANTRA_ENV:-}" \
   "$ROOT/ManTraNet/ManTraNet-pytorch-main/train_lzb.py" \
   "mantranet" \
-  "512,1,0.00001;384,1,0.00001;256,2,0.00001;256,1,0.00001" \
+  "${MANTRA_PROFILES:-512,2,0.00001;512,1,0.00001;384,2,0.00001;384,1,0.00001;256,4,0.00001;256,2,0.00001;256,1,0.00001}" \
   "$MANTRA_EPOCHS" \
-  "$WORKERS"
+  "$WORKERS" \
+  "--early-stop-min-epochs $MANTRA_EARLY_STOP_MIN_EPOCHS --early-stop-patience $MANTRA_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
 mantra_img="$(selected_field ManTraNet 1)"
 mantra_dir="$(selected_field ManTraNet 4)"
 predict_and_eval "ManTraNet" "${MANTRA_ENV:-}" "$ROOT/ManTraNet/ManTraNet-pytorch-main" "predict_lzb.py" "--model-file" "$mantra_dir/best.pth" "$mantra_img"

@@ -28,6 +28,9 @@ def parse_args():
     parser.add_argument("--image-size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--early-stop-min-epochs", type=int, default=25, help="Minimum epochs before early stopping can trigger.")
+    parser.add_argument("--early-stop-patience", type=int, default=15, help="Stop after this many epochs without meaningful val_F1 improvement; 0 disables early stopping.")
+    parser.add_argument("--early-stop-min-delta", type=float, default=1e-4, help="Minimum val_F1 improvement considered meaningful for early stopping.")
     return parser.parse_args()
 
 
@@ -46,6 +49,44 @@ def load_initial_weights(model, weight_path):
     wrapper = keras.models.Model(wrapper_input, model(wrapper_input), name="lzb_init_wrapper")
     wrapper.load_weights(weight_path)
     print("loaded initial weight through nested wrapper:", weight_path)
+
+
+class MinEpochEarlyStopping(keras.callbacks.Callback):
+    def __init__(self, monitor="val_F1", min_epochs=25, patience=15, min_delta=1e-4):
+        super().__init__()
+        self.monitor = monitor
+        self.min_epochs = int(min_epochs)
+        self.patience = int(patience)
+        self.min_delta = float(min_delta)
+        self.best = float("-inf")
+        self.wait = 0
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        current = logs.get(self.monitor)
+        if current is None or self.patience <= 0:
+            return
+        current = float(current)
+        current_epoch = epoch + 1
+        if current > self.best + self.min_delta:
+            self.best = current
+            self.wait = 0
+            return
+        if current_epoch < self.min_epochs:
+            return
+        self.wait += 1
+        print(
+            "early_stop patience={}/{} best_{}={:.6f} min_delta={:.6g}".format(
+                self.wait,
+                self.patience,
+                self.monitor,
+                self.best,
+                self.min_delta,
+            )
+        )
+        if self.wait >= self.patience:
+            print("early stopping at epoch {} best_{}={:.6f}".format(current_epoch, self.monitor, self.best))
+            self.model.stop_training = True
 
 
 def main():
@@ -84,6 +125,15 @@ def main():
         ),
         keras.callbacks.CSVLogger(os.path.join(args.out_dir, "train_log.csv")),
     ]
+    if args.early_stop_patience > 0:
+        callbacks.append(
+            MinEpochEarlyStopping(
+                monitor="val_F1",
+                min_epochs=args.early_stop_min_epochs,
+                patience=args.early_stop_patience,
+                min_delta=args.early_stop_min_delta,
+            )
+        )
     model.fit(
         train_gen,
         validation_data=val_gen,

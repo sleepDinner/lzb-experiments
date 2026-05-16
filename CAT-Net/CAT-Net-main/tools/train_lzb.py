@@ -36,6 +36,9 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=5e-3)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--save-last-every", type=int, default=0, help="Save last checkpoint every N epochs; 0 means final epoch only.")
+    parser.add_argument("--early-stop-min-epochs", type=int, default=20, help="Minimum epochs before early stopping can trigger.")
+    parser.add_argument("--early-stop-patience", type=int, default=12, help="Stop after this many epochs without meaningful val_f1 improvement; 0 disables early stopping.")
+    parser.add_argument("--early-stop-min-delta", type=float, default=1e-4, help="Minimum val_f1 improvement considered meaningful for early stopping.")
     parser.add_argument("--no-pretrain", dest="use_pretrain", action="store_false")
     parser.set_defaults(use_pretrain=True)
     return parser.parse_args()
@@ -152,6 +155,8 @@ def main():
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
 
     best_f1 = -1.0
+    early_best_f1 = -1.0
+    epochs_without_improvement = 0
     last_state = None
     best_path = os.path.join(args.out_dir, "best.pth.tar")
     last_path = os.path.join(args.out_dir, "last.pth.tar")
@@ -190,6 +195,23 @@ def main():
             best_f1 = val_f1
             best_name = save_best_checkpoint(state, args.out_dir, epoch + 1)
             print("updated {} val_f1={:.6f}".format(best_name, best_f1))
+        if args.early_stop_patience > 0:
+            if val_f1 > early_best_f1 + args.early_stop_min_delta:
+                early_best_f1 = val_f1
+                epochs_without_improvement = 0
+            elif epoch + 1 >= args.early_stop_min_epochs:
+                epochs_without_improvement += 1
+                print(
+                    "early_stop patience={}/{} best_val_f1={:.6f} min_delta={:.6g}".format(
+                        epochs_without_improvement,
+                        args.early_stop_patience,
+                        early_best_f1,
+                        args.early_stop_min_delta,
+                    )
+                )
+                if epochs_without_improvement >= args.early_stop_patience:
+                    print("early stopping at epoch {} best_val_f1={:.6f}".format(epoch + 1, best_f1))
+                    break
     if last_state is not None:
         torch.save(last_state, last_path)
         print("saved final last.pth.tar epoch={}".format(last_state["epoch"]))

@@ -36,6 +36,9 @@ def parse_args():
     )
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--save-last-every", type=int, default=0, help="Save last checkpoints every N epochs; 0 means final epoch only.")
+    parser.add_argument("--early-stop-min-epochs", type=int, default=8, help="Minimum epochs before early stopping can trigger.")
+    parser.add_argument("--early-stop-patience", type=int, default=6, help="Stop after this many epochs without meaningful val_f1 improvement; 0 disables early stopping.")
+    parser.add_argument("--early-stop-min-delta", type=float, default=1e-4, help="Minimum val_f1 improvement considered meaningful for early stopping.")
     parser.add_argument("--no-pretrain", dest="use_pretrain", action="store_false")
     parser.set_defaults(use_pretrain=True)
     return parser.parse_args()
@@ -214,6 +217,8 @@ def main():
     ce = torch.nn.CrossEntropyLoss()
 
     best_f1 = -1.0
+    early_best_f1 = -1.0
+    epochs_without_improvement = 0
     last_state = None
     best_fenet_path = os.path.join(args_cli.out_dir, "best_FENet.pth")
     for epoch in range(args_cli.epochs):
@@ -259,6 +264,23 @@ def main():
             best_f1 = val_f1
             best_prefix = save_best_state(args_cli.out_dir, FENet, SegNet, ClsNet, epoch + 1, val_f1, current_lr)
             print("updated {} checkpoints val_f1={:.6f}".format(best_prefix, best_f1))
+        if args_cli.early_stop_patience > 0:
+            if val_f1 > early_best_f1 + args_cli.early_stop_min_delta:
+                early_best_f1 = val_f1
+                epochs_without_improvement = 0
+            elif epoch + 1 >= args_cli.early_stop_min_epochs:
+                epochs_without_improvement += 1
+                print(
+                    "early_stop patience={}/{} best_val_f1={:.6f} min_delta={:.6g}".format(
+                        epochs_without_improvement,
+                        args_cli.early_stop_patience,
+                        early_best_f1,
+                        args_cli.early_stop_min_delta,
+                    )
+                )
+                if epochs_without_improvement >= args_cli.early_stop_patience:
+                    print("early stopping at epoch {} best_val_f1={:.6f}".format(epoch + 1, best_f1))
+                    break
     if last_state is not None:
         epoch, val_f1, current_lr = last_state
         save_state(args_cli.out_dir, FENet, SegNet, ClsNet, epoch, val_f1, current_lr, "last")
