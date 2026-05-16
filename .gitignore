@@ -1,0 +1,7 @@
+*.pth
+*.pt
+*.ckpt
+checkpoints/
+ckpt/
+output/
+outputs/

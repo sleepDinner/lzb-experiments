@@ -1,0 +1,42 @@
+# Unified environment for CAT-Net, IRIS0-SPAN, ManTraNet, MVSS-Net, and PSCC-Net LZB wrappers.
+# Tested target: Linux x86_64, Python 3.10, CUDA-capable NVIDIA driver for RTX 4090.
+# Use Tsinghua mirror for regular PyPI packages and PyTorch index for CUDA wheels.
+-i https://pypi.tuna.tsinghua.edu.cn/simple
+--trusted-host pypi.tuna.tsinghua.edu.cn
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+torch==2.1.2+cu121
+torchvision==0.16.2+cu121
+
+# TensorFlow/Keras for IRIS0-SPAN. Keep Keras 2.x; Keras 3 is not compatible with this codebase.
+tensorflow[and-cuda]==2.15.1
+keras==2.15.0
+h5py==3.10.0
+protobuf<5
+
+numpy==1.23.5
+scipy==1.11.4
+scikit-learn==1.3.2
+scikit-image==0.22.0
+opencv-python-headless==4.8.1.78
+Pillow==10.2.0
+imageio==2.33.1
+
+PyYAML==6.0.1
+yacs==0.1.8
+tqdm==4.66.1
+tensorboardX==2.6.2.2
+pytorch-lightning==2.1.4
+matplotlib==3.8.2
+seaborn==0.13.1
+parse==1.20.0
+pandas==2.1.4
+timm==0.9.12
+albumentations==1.3.1
+torch-dct==0.1.6
+Cython==3.0.8
+wheel
+setuptools
+
+# CAT-Net DCT/JPEG reader. Use PyPI to avoid git/libffi issues on some servers.
+jpegio==0.2.8
