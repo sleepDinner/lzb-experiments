@@ -236,10 +236,7 @@ class ResNet50(nn.Module):
         self.model = resnet(n_input=n_input, pretrained=pretrained, layers=[3, 4, 6, 3], backbone='resnet50')
         self.relu = self.model.relu  # Place a hook
 
-        layers_cfg = [4, 5, 6, 7]
-        self.blocks = []
-        for i, num_this_layer in enumerate(layers_cfg):
-            self.blocks.append(list(self.model.children())[num_this_layer])
+        self.blocks = ["layer1", "layer2", "layer3", "layer4"]
 
     def base_forward(self, x):
         feature_map = []
@@ -248,7 +245,8 @@ class ResNet50(nn.Module):
         x = self.model.relu(x)
         x = self.model.maxpool(x)
 
-        for i, block in enumerate(self.blocks):
+        for block_name in self.blocks:
+            block = getattr(self.model, block_name)
             x = block(x)
             feature_map.append(x)
 
