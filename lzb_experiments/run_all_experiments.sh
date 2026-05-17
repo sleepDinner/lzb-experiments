@@ -46,6 +46,7 @@ predict_and_eval() {
   local pred_script="$4"
   local weight_arg="$5"
   local weight_path="$6"
+  local predict_batch="$7"
 
   local lists_dir="$WORK_DIR/lists"
   local pred_root="$WORK_DIR/predictions/$method"
@@ -60,7 +61,8 @@ predict_and_eval() {
       --list-file "$list_file" \
       "$weight_arg" "$weight_path" \
       --out-dir "$pred_root/tests/$dataset_name" \
-      --image-size "$IMAGE_SIZE"
+      --image-size "$IMAGE_SIZE" \
+      --batch-size "$predict_batch"
     "$PYTHON_BIN" -m lzb_experiments.evaluate_predictions \
       --list-file "$list_file" \
       --pred-dir "$pred_root/tests/$dataset_name" \
@@ -71,7 +73,8 @@ predict_and_eval() {
     --list-file "$lists_dir/tests/${ROBUST_DATASET}.txt" \
     "$weight_arg" "$weight_path" \
     --out-dir "$pred_root/clean" \
-    --image-size "$IMAGE_SIZE"
+    --image-size "$IMAGE_SIZE" \
+    --batch-size "$predict_batch"
   "$PYTHON_BIN" -m lzb_experiments.evaluate_predictions \
     --list-file "$lists_dir/tests/${ROBUST_DATASET}.txt" \
     --pred-dir "$pred_root/clean" \
@@ -82,7 +85,8 @@ predict_and_eval() {
       --list-file "$lists_dir/robust/${ROBUST_DATASET}_${variant}.txt" \
       "$weight_arg" "$weight_path" \
       --out-dir "$pred_root/$variant" \
-      --image-size "$IMAGE_SIZE"
+      --image-size "$IMAGE_SIZE" \
+      --batch-size "$predict_batch"
     "$PYTHON_BIN" -m lzb_experiments.evaluate_predictions \
       --list-file "$lists_dir/robust/${ROBUST_DATASET}_${variant}.txt" \
       --pred-dir "$pred_root/$variant" \
@@ -99,7 +103,7 @@ run_py "${CAT_ENV:-}" "$PYTHON_BIN" "$ROOT/CAT-Net/CAT-Net-main/tools/train_lzb.
   --epochs "$EPOCHS" \
   --batch-size "$BATCH_SIZE" \
   --image-size "$IMAGE_SIZE"
-predict_and_eval "CAT-Net" "${CAT_ENV:-}" "$ROOT/CAT-Net/CAT-Net-main" "tools/predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints/catnet/best.pth.tar"
+predict_and_eval "CAT-Net" "${CAT_ENV:-}" "$ROOT/CAT-Net/CAT-Net-main" "tools/predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints/catnet/best.pth.tar" "$BATCH_SIZE"
 
 run_py "${MVSS_ENV:-}" "$PYTHON_BIN" "$ROOT/MVSS-Net/MVSS-Net-master/train_lzb.py" \
   --train-list "$WORK_DIR/lists/train.txt" \
@@ -108,7 +112,7 @@ run_py "${MVSS_ENV:-}" "$PYTHON_BIN" "$ROOT/MVSS-Net/MVSS-Net-master/train_lzb.p
   --epochs "$EPOCHS" \
   --batch-size "$BATCH_SIZE" \
   --image-size "$IMAGE_SIZE"
-predict_and_eval "MVSS-Net" "${MVSS_ENV:-}" "$ROOT/MVSS-Net/MVSS-Net-master" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints/mvssnet/best.pth"
+predict_and_eval "MVSS-Net" "${MVSS_ENV:-}" "$ROOT/MVSS-Net/MVSS-Net-master" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints/mvssnet/best.pth" "$BATCH_SIZE"
 
 run_py "${PSCC_ENV:-}" "$PYTHON_BIN" "$ROOT/PSCC-Net/PSCC-Net-main/train_lzb.py" \
   --train-list "$WORK_DIR/lists/train.txt" \
@@ -117,7 +121,7 @@ run_py "${PSCC_ENV:-}" "$PYTHON_BIN" "$ROOT/PSCC-Net/PSCC-Net-main/train_lzb.py"
   --epochs "$EPOCHS" \
   --batch-size "$BATCH_SIZE" \
   --image-size "$IMAGE_SIZE"
-predict_and_eval "PSCC-Net" "${PSCC_ENV:-}" "$ROOT/PSCC-Net/PSCC-Net-main" "predict_lzb.py" "--checkpoint-dir" "$WORK_DIR/checkpoints/psccnet"
+predict_and_eval "PSCC-Net" "${PSCC_ENV:-}" "$ROOT/PSCC-Net/PSCC-Net-main" "predict_lzb.py" "--checkpoint-dir" "$WORK_DIR/checkpoints/psccnet" "$BATCH_SIZE"
 
 run_py "${SPAN_ENV:-}" "$PYTHON_BIN" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main/train_lzb.py" \
   --train-list "$WORK_DIR/lists/train.txt" \
@@ -126,7 +130,7 @@ run_py "${SPAN_ENV:-}" "$PYTHON_BIN" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main/train_lzb
   --epochs "$EPOCHS" \
   --batch-size 1 \
   --image-size "$IMAGE_SIZE"
-predict_and_eval "IRIS0-SPAN" "${SPAN_ENV:-}" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints/span/best.h5"
+predict_and_eval "IRIS0-SPAN" "${SPAN_ENV:-}" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints/span/best.h5" "1"
 
 run_py "${MANTRA_ENV:-}" "$PYTHON_BIN" "$ROOT/ManTraNet/ManTraNet-pytorch-main/train_lzb.py" \
   --train-list "$WORK_DIR/lists/train.txt" \
@@ -135,7 +139,7 @@ run_py "${MANTRA_ENV:-}" "$PYTHON_BIN" "$ROOT/ManTraNet/ManTraNet-pytorch-main/t
   --epochs "$EPOCHS" \
   --batch-size "$MANTRA_BATCH_SIZE" \
   --image-size "$IMAGE_SIZE"
-predict_and_eval "ManTraNet" "${MANTRA_ENV:-}" "$ROOT/ManTraNet/ManTraNet-pytorch-main" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints/mantranet/best.pth"
+predict_and_eval "ManTraNet" "${MANTRA_ENV:-}" "$ROOT/ManTraNet/ManTraNet-pytorch-main" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints/mantranet/best.pth" "$MANTRA_BATCH_SIZE"
 
 "$PYTHON_BIN" -m lzb_experiments.summarize_results \
   --results-dir "$WORK_DIR/results" \

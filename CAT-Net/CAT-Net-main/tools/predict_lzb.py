@@ -29,6 +29,7 @@ def parse_args():
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--cfg", default="experiments/CAT_full.yaml")
     parser.add_argument("--image-size", type=int, default=512)
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--workers", type=int, default=2)
     return parser.parse_args()
 
@@ -62,25 +63,28 @@ def main():
         read_from_jpeg=True,
         resize_to=(args.image_size, args.image_size),
     )
-    loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=args.workers, pin_memory=True, collate_fn=cat_collate)
+    loader = DataLoader(dataset, batch_size=max(1, args.batch_size), shuffle=False, num_workers=args.workers, pin_memory=True, collate_fn=cat_collate)
     model = eval("models." + config.MODEL.NAME + ".get_seg_model")(config)
     checkpoint = torch.load(args.model_file, map_location="cpu")
     model.load_state_dict(checkpoint["state_dict"], strict=True)
     model = nn.DataParallel(model, device_ids=list(range(torch.cuda.device_count()))).cuda()
     model.eval()
 
+    offset = 0
     with torch.no_grad():
-        for index, (image, _label, qtable) in enumerate(tqdm(loader)):
-            image_path, _ = dataset.tamp_list[index]
+        for image, _label, qtable in tqdm(loader):
+            batch_paths = [item[0] for item in dataset.tamp_list[offset:offset + image.shape[0]]]
+            offset += image.shape[0]
             image = image.cuda(non_blocking=True)
             qtable = qtable.cuda(non_blocking=True)
             logits = model(image, qtable)
             prob = torch.softmax(logits, dim=1)[:, 1]
-            raw = cv2.imread(image_path, cv2.IMREAD_COLOR)
-            target_size = raw.shape[:2] if raw is not None else _label.shape[-2:]
-            prob = F.interpolate(prob.unsqueeze(1), size=target_size, mode="bilinear", align_corners=False)
-            pred = prob.squeeze().detach().cpu().numpy()
-            cv2.imwrite(str(out_dir / prediction_filename(image_path)), (pred * 255).clip(0, 255).astype("uint8"))
+            for idx, image_path in enumerate(batch_paths):
+                raw = cv2.imread(image_path, cv2.IMREAD_COLOR)
+                target_size = raw.shape[:2] if raw is not None else _label.shape[-2:]
+                pred = F.interpolate(prob[idx:idx + 1].unsqueeze(1), size=target_size, mode="bilinear", align_corners=False)
+                pred = pred.squeeze().detach().cpu().numpy()
+                cv2.imwrite(str(out_dir / prediction_filename(image_path)), (pred * 255).clip(0, 255).astype("uint8"))
 
 
 if __name__ == "__main__":

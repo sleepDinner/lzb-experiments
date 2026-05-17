@@ -24,6 +24,7 @@ def parse_args():
     parser.add_argument("--checkpoint-dir", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--image-size", type=int, default=512)
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--workers", type=int, default=4)
     return parser.parse_args()
 
@@ -37,7 +38,7 @@ def main():
     pscc_args.freeze()
 
     dataset = LZBPSCCDataset(args_cli.list_file, args_cli.image_size, train=False)
-    loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=args_cli.workers, pin_memory=True)
+    loader = DataLoader(dataset, batch_size=max(1, args_cli.batch_size), shuffle=False, num_workers=args_cli.workers, pin_memory=True)
     FENet = get_seg_model(get_hrnet_cfg()).cuda()
     SegNet = NLCDetection(pscc_args).cuda()
     FENet.load_state_dict(torch.load(Path(args_cli.checkpoint_dir) / "best_FENet.pth", map_location="cpu")["state_dict"])
@@ -51,11 +52,12 @@ def main():
             image = image.cuda(non_blocking=True)
             feat = FENet(image)
             pred = SegNet(feat)[0]
-            raw = cv2.imread(paths[0], cv2.IMREAD_COLOR)
-            target_size = raw.shape[:2] if raw is not None else (args_cli.image_size, args_cli.image_size)
-            pred = F.interpolate(pred, size=target_size, mode="bilinear", align_corners=True)
-            prob = pred[0, 0].detach().cpu().numpy()
-            save_prob_png(Path(args_cli.out_dir) / prediction_filename(paths[0]), prob)
+            for idx, image_path in enumerate(paths):
+                raw = cv2.imread(image_path, cv2.IMREAD_COLOR)
+                target_size = raw.shape[:2] if raw is not None else (args_cli.image_size, args_cli.image_size)
+                prob = F.interpolate(pred[idx:idx + 1], size=target_size, mode="bilinear", align_corners=True)
+                prob = prob[0, 0].detach().cpu().numpy()
+                save_prob_png(Path(args_cli.out_dir) / prediction_filename(image_path), prob)
 
 
 if __name__ == "__main__":

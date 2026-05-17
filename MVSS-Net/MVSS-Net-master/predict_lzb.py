@@ -21,6 +21,7 @@ def parse_args():
     parser.add_argument("--model-file", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--image-size", type=int, default=512)
+    parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--workers", type=int, default=4)
     return parser.parse_args()
 
@@ -29,7 +30,7 @@ def main():
     args = parse_args()
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
     dataset = LZBSegDataset(args.list_file, args.image_size, train=False)
-    loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=args.workers, pin_memory=True)
+    loader = DataLoader(dataset, batch_size=max(1, args.batch_size), shuffle=False, num_workers=args.workers, pin_memory=True)
     model = get_mvss(backbone="resnet50", pretrained_base=True, nclass=1, sobel=True, constrain=True, n_input=3)
     checkpoint = torch.load(args.model_file, map_location="cpu")
     model.load_state_dict(checkpoint.get("state_dict", checkpoint), strict=True)
@@ -40,12 +41,13 @@ def main():
             image = image.cuda(non_blocking=True)
             _edge, seg = model(image)
             seg = F.interpolate(seg, size=(args.image_size, args.image_size), mode="bilinear", align_corners=False)
-            prob = torch.sigmoid(seg)[0, 0].detach().cpu().numpy()
-            image_path = paths[0]
-            raw = cv2.imread(image_path, cv2.IMREAD_COLOR)
-            if raw is not None and raw.shape[:2] != prob.shape:
-                prob = cv2.resize(prob, (raw.shape[1], raw.shape[0]), interpolation=cv2.INTER_LINEAR)
-            save_prob_png(Path(args.out_dir) / prediction_filename(image_path), prob)
+            probs = torch.sigmoid(seg)[:, 0].detach().cpu().numpy()
+            for idx, image_path in enumerate(paths):
+                prob = probs[idx]
+                raw = cv2.imread(image_path, cv2.IMREAD_COLOR)
+                if raw is not None and raw.shape[:2] != prob.shape:
+                    prob = cv2.resize(prob, (raw.shape[1], raw.shape[0]), interpolation=cv2.INTER_LINEAR)
+                save_prob_png(Path(args.out_dir) / prediction_filename(image_path), prob)
 
 
 if __name__ == "__main__":

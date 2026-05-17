@@ -55,6 +55,7 @@ predict_eval_smoke() {
   local pred_script="$4"
   local weight_arg="$5"
   local weight_path="$6"
+  local predict_batch="$7"
 
   local smoke_dir="$WORK_DIR/lists/smoke"
   local pred_root="$WORK_DIR/predictions_smoke/$method"
@@ -66,6 +67,7 @@ predict_eval_smoke() {
     "$weight_arg" "$weight_path" \
     --out-dir "$pred_root/clean" \
     --image-size "$IMAGE_SIZE" \
+    --batch-size "$predict_batch" \
     --workers 0
   "$PYTHON_BIN" -m lzb_experiments.evaluate_predictions \
     --list-file "$smoke_dir/${ROBUST_DATASET}_clean.txt" \
@@ -77,6 +79,7 @@ predict_eval_smoke() {
     "$weight_arg" "$weight_path" \
     --out-dir "$pred_root/jpeg_q70" \
     --image-size "$IMAGE_SIZE" \
+    --batch-size "$predict_batch" \
     --workers 0
   "$PYTHON_BIN" -m lzb_experiments.evaluate_predictions \
     --list-file "$smoke_dir/${ROBUST_DATASET}_jpeg_q70.txt" \
@@ -94,7 +97,7 @@ run_py "${CAT_ENV:-}" "$PYTHON_BIN" "$ROOT/CAT-Net/CAT-Net-main/tools/train_lzb.
   --batch-size "$BATCH_SIZE" \
   --image-size "$IMAGE_SIZE" \
   --workers 0
-predict_eval_smoke "CAT-Net" "${CAT_ENV:-}" "$ROOT/CAT-Net/CAT-Net-main" "tools/predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/catnet/best.pth.tar"
+predict_eval_smoke "CAT-Net" "${CAT_ENV:-}" "$ROOT/CAT-Net/CAT-Net-main" "tools/predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/catnet/best.pth.tar" "$BATCH_SIZE"
 
 run_py "${MVSS_ENV:-}" "$PYTHON_BIN" "$ROOT/MVSS-Net/MVSS-Net-master/train_lzb.py" \
   --train-list "$WORK_DIR/lists/smoke/train.txt" \
@@ -104,7 +107,7 @@ run_py "${MVSS_ENV:-}" "$PYTHON_BIN" "$ROOT/MVSS-Net/MVSS-Net-master/train_lzb.p
   --batch-size "$BATCH_SIZE" \
   --image-size "$IMAGE_SIZE" \
   --workers 0
-predict_eval_smoke "MVSS-Net" "${MVSS_ENV:-}" "$ROOT/MVSS-Net/MVSS-Net-master" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/mvssnet/best.pth"
+predict_eval_smoke "MVSS-Net" "${MVSS_ENV:-}" "$ROOT/MVSS-Net/MVSS-Net-master" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/mvssnet/best.pth" "$BATCH_SIZE"
 
 run_py "${PSCC_ENV:-}" "$PYTHON_BIN" "$ROOT/PSCC-Net/PSCC-Net-main/train_lzb.py" \
   --train-list "$WORK_DIR/lists/smoke/train.txt" \
@@ -114,7 +117,7 @@ run_py "${PSCC_ENV:-}" "$PYTHON_BIN" "$ROOT/PSCC-Net/PSCC-Net-main/train_lzb.py"
   --batch-size "$BATCH_SIZE" \
   --image-size "$IMAGE_SIZE" \
   --workers 0
-predict_eval_smoke "PSCC-Net" "${PSCC_ENV:-}" "$ROOT/PSCC-Net/PSCC-Net-main" "predict_lzb.py" "--checkpoint-dir" "$WORK_DIR/checkpoints_smoke/psccnet"
+predict_eval_smoke "PSCC-Net" "${PSCC_ENV:-}" "$ROOT/PSCC-Net/PSCC-Net-main" "predict_lzb.py" "--checkpoint-dir" "$WORK_DIR/checkpoints_smoke/psccnet" "$BATCH_SIZE"
 
 run_py "${SPAN_ENV:-}" "$PYTHON_BIN" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main/train_lzb.py" \
   --train-list "$WORK_DIR/lists/smoke/train.txt" \
@@ -124,7 +127,7 @@ run_py "${SPAN_ENV:-}" "$PYTHON_BIN" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main/train_lzb
   --batch-size 1 \
   --image-size "$IMAGE_SIZE" \
   --workers 0
-predict_eval_smoke "IRIS0-SPAN" "${SPAN_ENV:-}" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/span/best.h5"
+predict_eval_smoke "IRIS0-SPAN" "${SPAN_ENV:-}" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/span/best.h5" "1"
 
 run_py "${MANTRA_ENV:-}" "$PYTHON_BIN" "$ROOT/ManTraNet/ManTraNet-pytorch-main/train_lzb.py" \
   --train-list "$WORK_DIR/lists/smoke/train.txt" \
@@ -134,7 +137,7 @@ run_py "${MANTRA_ENV:-}" "$PYTHON_BIN" "$ROOT/ManTraNet/ManTraNet-pytorch-main/t
   --batch-size "$MANTRA_BATCH_SIZE" \
   --image-size "$IMAGE_SIZE" \
   --workers 0
-predict_eval_smoke "ManTraNet" "${MANTRA_ENV:-}" "$ROOT/ManTraNet/ManTraNet-pytorch-main" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/mantranet/best.pth"
+predict_eval_smoke "ManTraNet" "${MANTRA_ENV:-}" "$ROOT/ManTraNet/ManTraNet-pytorch-main" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/mantranet/best.pth" "$MANTRA_BATCH_SIZE"
 
 "$PYTHON_BIN" -m lzb_experiments.summarize_results \
   --results-dir "$WORK_DIR/results_smoke" \

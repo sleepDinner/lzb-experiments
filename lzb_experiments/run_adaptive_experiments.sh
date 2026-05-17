@@ -273,6 +273,7 @@ predict_and_eval() {
   local weight_arg="$5"
   local weight_path="$6"
   local image_size="$7"
+  local predict_batch="$8"
 
   local lists_dir="$WORK_DIR/lists"
   local pred_root="$WORK_DIR/predictions/$method"
@@ -287,7 +288,8 @@ predict_and_eval() {
       --list-file "$list_file" \
       "$weight_arg" "$weight_path" \
       --out-dir "$pred_root/tests/$dataset_name" \
-      --image-size "$image_size"
+      --image-size "$image_size" \
+      --batch-size "$predict_batch"
     "$PYTHON_BIN" -m lzb_experiments.evaluate_predictions \
       --list-file "$list_file" \
       --pred-dir "$pred_root/tests/$dataset_name" \
@@ -298,7 +300,8 @@ predict_and_eval() {
     --list-file "$lists_dir/tests/${ROBUST_DATASET}.txt" \
     "$weight_arg" "$weight_path" \
     --out-dir "$pred_root/clean" \
-    --image-size "$image_size"
+    --image-size "$image_size" \
+    --batch-size "$predict_batch"
   "$PYTHON_BIN" -m lzb_experiments.evaluate_predictions \
     --list-file "$lists_dir/tests/${ROBUST_DATASET}.txt" \
     --pred-dir "$pred_root/clean" \
@@ -309,7 +312,8 @@ predict_and_eval() {
       --list-file "$lists_dir/robust/${ROBUST_DATASET}_${variant}.txt" \
       "$weight_arg" "$weight_path" \
       --out-dir "$pred_root/$variant" \
-      --image-size "$image_size"
+      --image-size "$image_size" \
+      --batch-size "$predict_batch"
     "$PYTHON_BIN" -m lzb_experiments.evaluate_predictions \
       --list-file "$lists_dir/robust/${ROBUST_DATASET}_${variant}.txt" \
       --pred-dir "$pred_root/$variant" \
@@ -340,13 +344,14 @@ else
     "${CAT_ENV:-}" \
     "$ROOT/CAT-Net/CAT-Net-main/tools/train_lzb.py" \
     "catnet" \
-    "${CAT_PROFILES:-512,22,0.005,4;512,22,0.005,2;512,16,0.005,4;512,16,0.005,2;512,11,0.005,4;512,11,0.005,2;512,8,0.005,4;512,8,0.005,2;512,4,0.005,2;512,4,0.005,0;384,8,0.005,4;384,4,0.005,2;256,8,0.005,4;256,4,0.005,2}" \
+    "${CAT_PROFILES:-512,22,0.005,2;512,16,0.005,4;512,16,0.005,2;512,11,0.005,4;512,11,0.005,2;512,8,0.005,4;512,8,0.005,2;512,4,0.005,2;512,4,0.005,0;384,8,0.005,4;384,4,0.005,2;256,8,0.005,4;256,4,0.005,2}" \
     "$CAT_EPOCHS" \
     "$CAT_WORKERS" \
     "--save-last-every $CAT_SAVE_LAST_EVERY --best-save-start-epoch $CAT_BEST_SAVE_START_EPOCH --early-stop-min-epochs $CAT_EARLY_STOP_MIN_EPOCHS --early-stop-patience $CAT_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
   cat_img="$(selected_field CAT-Net 1)"
+  cat_batch="${CAT_PREDICT_BATCH_SIZE:-$(selected_field CAT-Net 2)}"
   cat_dir="$(selected_field CAT-Net 4)"
-  predict_and_eval "CAT-Net" "${CAT_ENV:-}" "$ROOT/CAT-Net/CAT-Net-main" "tools/predict_lzb.py" "--model-file" "$cat_dir/best.pth.tar" "$cat_img"
+  predict_and_eval "CAT-Net" "${CAT_ENV:-}" "$ROOT/CAT-Net/CAT-Net-main" "tools/predict_lzb.py" "--model-file" "$cat_dir/best.pth.tar" "$cat_img" "$cat_batch"
   mark_complete "CAT-Net" "$cat_dir" "$cat_img"
 fi
 
@@ -363,8 +368,9 @@ else
     "$WORKERS" \
     "--save-last-every $MVSS_SAVE_LAST_EVERY --best-save-start-epoch $MVSS_BEST_SAVE_START_EPOCH --early-stop-min-epochs $MVSS_EARLY_STOP_MIN_EPOCHS --early-stop-patience $MVSS_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
   mvss_img="$(selected_field MVSS-Net 1)"
+  mvss_batch="${MVSS_PREDICT_BATCH_SIZE:-$(selected_field MVSS-Net 2)}"
   mvss_dir="$(selected_field MVSS-Net 4)"
-  predict_and_eval "MVSS-Net" "${MVSS_ENV:-}" "$ROOT/MVSS-Net/MVSS-Net-master" "predict_lzb.py" "--model-file" "$mvss_dir/best.pth" "$mvss_img"
+  predict_and_eval "MVSS-Net" "${MVSS_ENV:-}" "$ROOT/MVSS-Net/MVSS-Net-master" "predict_lzb.py" "--model-file" "$mvss_dir/best.pth" "$mvss_img" "$mvss_batch"
   mark_complete "MVSS-Net" "$mvss_dir" "$mvss_img"
 fi
 
@@ -381,8 +387,9 @@ else
     "$WORKERS" \
     "--save-last-every $PSCC_SAVE_LAST_EVERY --best-save-start-epoch $PSCC_BEST_SAVE_START_EPOCH --early-stop-min-epochs $PSCC_EARLY_STOP_MIN_EPOCHS --early-stop-patience $PSCC_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
   pscc_img="$(selected_field PSCC-Net 1)"
+  pscc_batch="${PSCC_PREDICT_BATCH_SIZE:-$(selected_field PSCC-Net 2)}"
   pscc_dir="$(selected_field PSCC-Net 4)"
-  predict_and_eval "PSCC-Net" "${PSCC_ENV:-}" "$ROOT/PSCC-Net/PSCC-Net-main" "predict_lzb.py" "--checkpoint-dir" "$pscc_dir" "$pscc_img"
+  predict_and_eval "PSCC-Net" "${PSCC_ENV:-}" "$ROOT/PSCC-Net/PSCC-Net-main" "predict_lzb.py" "--checkpoint-dir" "$pscc_dir" "$pscc_img" "$pscc_batch"
   mark_complete "PSCC-Net" "$pscc_dir" "$pscc_img"
 fi
 
@@ -399,8 +406,9 @@ else
     "$SPAN_WORKERS" \
     "--save-last-every $SPAN_SAVE_LAST_EVERY --best-save-start-epoch $SPAN_BEST_SAVE_START_EPOCH --early-stop-min-epochs $SPAN_EARLY_STOP_MIN_EPOCHS --early-stop-patience $SPAN_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
   span_img="$(selected_field IRIS0-SPAN 1)"
+  span_batch="${SPAN_PREDICT_BATCH_SIZE:-$(selected_field IRIS0-SPAN 2)}"
   span_dir="$(selected_field IRIS0-SPAN 4)"
-  predict_and_eval "IRIS0-SPAN" "${SPAN_ENV:-}" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main" "predict_lzb.py" "--model-file" "$span_dir/best.h5" "$span_img"
+  predict_and_eval "IRIS0-SPAN" "${SPAN_ENV:-}" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main" "predict_lzb.py" "--model-file" "$span_dir/best.h5" "$span_img" "$span_batch"
   mark_complete "IRIS0-SPAN" "$span_dir" "$span_img"
 fi
 
@@ -417,8 +425,9 @@ else
     "$WORKERS" \
     "--save-last-every $MANTRA_SAVE_LAST_EVERY --best-save-start-epoch $MANTRA_BEST_SAVE_START_EPOCH --early-stop-min-epochs $MANTRA_EARLY_STOP_MIN_EPOCHS --early-stop-patience $MANTRA_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
   mantra_img="$(selected_field ManTraNet 1)"
+  mantra_batch="${MANTRA_PREDICT_BATCH_SIZE:-$(selected_field ManTraNet 2)}"
   mantra_dir="$(selected_field ManTraNet 4)"
-  predict_and_eval "ManTraNet" "${MANTRA_ENV:-}" "$ROOT/ManTraNet/ManTraNet-pytorch-main" "predict_lzb.py" "--model-file" "$mantra_dir/best.pth" "$mantra_img"
+  predict_and_eval "ManTraNet" "${MANTRA_ENV:-}" "$ROOT/ManTraNet/ManTraNet-pytorch-main" "predict_lzb.py" "--model-file" "$mantra_dir/best.pth" "$mantra_img" "$mantra_batch"
   mark_complete "ManTraNet" "$mantra_dir" "$mantra_img"
 fi
 
