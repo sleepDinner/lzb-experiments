@@ -467,11 +467,13 @@ class IMTFE(nn.Module):
         self.init_conv = nn.Conv2d(in_channel, 4, 5, 1, padding=0, bias=False)
 
         self.BayarConv2D = nn.Conv2d(in_channel, 3, 5, 1, padding=0, bias=False)
-        self.bayar_mask = (torch.tensor(np.ones(shape=(5, 5)))).to(self.device)
-        self.bayar_mask[2, 2] = 0
+        bayar_mask = torch.ones((5, 5), dtype=torch.float32)
+        bayar_mask[2, 2] = 0
+        self.register_buffer("bayar_mask", bayar_mask, persistent=False)
 
-        self.bayar_final = (torch.tensor(np.zeros((5, 5)))).to(self.device)
-        self.bayar_final[2, 2] = -1
+        bayar_final = torch.zeros((5, 5), dtype=torch.float32)
+        bayar_final[2, 2] = -1
+        self.register_buffer("bayar_final", bayar_final, persistent=False)
 
         self.SRMConv2D = nn.Conv2d(in_channel, 9, 5, 1, padding=0, bias=False)
         self.SRMConv2D.weight.data=torch.load('IMTFEv4.pt')['SRMConv2D.weight']
