@@ -25,6 +25,10 @@ def main():
         rows.append({
             "method": method,
             "variant": variant,
+            "f1_origin": item.get("f1_origin", item.get("f1")),
+            "auc_origin": item.get("auc_origin", item.get("auc")),
+            "f1_double": item.get("f1_double"),
+            "auc_double": item.get("auc_double"),
             "f1": item.get("f1"),
             "iou": item.get("iou"),
             "auc": item.get("auc"),
@@ -38,7 +42,22 @@ def main():
     out_csv = Path(args.out_csv)
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     with open(out_csv, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["method", "variant", "f1", "iou", "auc", "evaluated", "missing"])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "method",
+                "variant",
+                "f1_origin",
+                "auc_origin",
+                "f1_double",
+                "auc_double",
+                "f1",
+                "iou",
+                "auc",
+                "evaluated",
+                "missing",
+            ],
+        )
         writer.writeheader()
         writer.writerows(rows)
     print(f"Wrote summary: {out_csv}")

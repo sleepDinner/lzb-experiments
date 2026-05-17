@@ -1,6 +1,9 @@
 import argparse
+import glob
 import json
 import os
+import re
+import shutil
 from pathlib import Path
 
 from keras_compat import apply_compat
@@ -28,6 +31,10 @@ def parse_args():
     parser.add_argument("--image-size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--resume-from", default="", help="Resume training from an IRIS0-SPAN .h5 checkpoint.")
+    parser.add_argument("--resume-epoch", type=int, default=-1, help="Epoch to resume from when checkpoint metadata is unavailable.")
+    parser.add_argument("--save-last-every", type=int, default=1, help="Save last.h5 every N epochs; 0 means final epoch only.")
+    parser.add_argument("--best-save-start-epoch", type=int, default=10, help="Do not write best checkpoints before this epoch.")
     parser.add_argument("--early-stop-min-epochs", type=int, default=25, help="Minimum epochs before early stopping can trigger.")
     parser.add_argument("--early-stop-patience", type=int, default=15, help="Stop after this many epochs without meaningful val_F1 improvement; 0 disables early stopping.")
     parser.add_argument("--early-stop-min-delta", type=float, default=1e-4, help="Minimum val_F1 improvement considered meaningful for early stopping.")
@@ -49,6 +56,101 @@ def load_initial_weights(model, weight_path):
     wrapper = keras.models.Model(wrapper_input, model(wrapper_input), name="lzb_init_wrapper")
     wrapper.load_weights(weight_path)
     print("loaded initial weight through nested wrapper:", weight_path)
+
+
+def metadata_path_for(weight_path):
+    base = os.path.splitext(weight_path)[0]
+    return base + ".json"
+
+
+def infer_resume_epoch(weight_path, explicit_epoch=-1):
+    if explicit_epoch >= 0:
+        return int(explicit_epoch)
+    meta_path = metadata_path_for(weight_path)
+    if os.path.isfile(meta_path):
+        with open(meta_path, "r", encoding="utf-8") as f:
+            return int(json.load(f).get("epoch", 0))
+    match = re.search(r"epoch(\d+)", os.path.basename(weight_path))
+    if match:
+        return int(match.group(1))
+    return 0
+
+
+def write_checkpoint_metadata(weight_path, epoch, logs=None):
+    logs = logs or {}
+    serializable = {}
+    for key, value in logs.items():
+        try:
+            serializable[key] = float(value)
+        except (TypeError, ValueError):
+            serializable[key] = str(value)
+    serializable["epoch"] = int(epoch)
+    with open(metadata_path_for(weight_path), "w", encoding="utf-8") as f:
+        json.dump(serializable, f, indent=2, sort_keys=True)
+
+
+class LastCheckpoint(keras.callbacks.Callback):
+    def __init__(self, out_dir, save_every=1):
+        super().__init__()
+        self.path = os.path.join(out_dir, "last.h5")
+        self.save_every = int(save_every)
+        self.last_epoch = 0
+        self.last_logs = {}
+
+    def on_epoch_end(self, epoch, logs=None):
+        current_epoch = epoch + 1
+        self.last_epoch = current_epoch
+        self.last_logs = logs or {}
+        if self.save_every > 0 and current_epoch % self.save_every == 0:
+            self.model.save_weights(self.path)
+            write_checkpoint_metadata(self.path, current_epoch, logs)
+            print("saved periodic last.h5 epoch={}".format(current_epoch))
+
+    def on_train_end(self, logs=None):
+        if self.last_epoch > 0:
+            self.model.save_weights(self.path)
+            write_checkpoint_metadata(self.path, self.last_epoch, self.last_logs)
+            print("saved final last.h5 epoch={}".format(self.last_epoch))
+
+
+class DelayedBestCheckpoint(keras.callbacks.Callback):
+    def __init__(self, out_dir, monitor="val_F1", start_epoch=1, min_delta=0.0):
+        super().__init__()
+        self.out_dir = out_dir
+        self.monitor = monitor
+        self.start_epoch = int(start_epoch)
+        self.min_delta = float(min_delta)
+        self.best = float("-inf")
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        current = logs.get(self.monitor)
+        current_epoch = epoch + 1
+        if current is None:
+            return
+        current = float(current)
+        if current_epoch < self.start_epoch:
+            if current > self.best + self.min_delta:
+                print(
+                    "best candidate epoch={} {}={:.6f} not saved before best_save_start_epoch={}".format(
+                        current_epoch, self.monitor, current, self.start_epoch
+                    )
+                )
+            return
+        if current <= self.best + self.min_delta:
+            return
+        self.best = current
+        filename = "best_epoch{:03d}.h5".format(current_epoch)
+        target_path = os.path.join(self.out_dir, filename)
+        for old_path in glob.glob(os.path.join(self.out_dir, "best_epoch*.h5")):
+            if os.path.basename(old_path) != filename:
+                os.remove(old_path)
+        self.model.save_weights(target_path)
+        write_checkpoint_metadata(target_path, current_epoch, logs)
+        alias_path = os.path.join(self.out_dir, "best.h5")
+        shutil.copy2(target_path, alias_path)
+        write_checkpoint_metadata(alias_path, current_epoch, logs)
+        print("updated {} {}={:.6f}".format(filename, self.monitor, current))
 
 
 class MinEpochEarlyStopping(keras.callbacks.Callback):
@@ -108,20 +210,27 @@ def main():
         load_initial_weights(model, args.init_weight)
     elif args.init_weight:
         raise FileNotFoundError("IRIS0-SPAN init weight not found: {}".format(args.init_weight))
+    initial_epoch = 0
+    if args.resume_from:
+        if not os.path.isfile(args.resume_from):
+            raise FileNotFoundError("IRIS0-SPAN resume checkpoint not found: {}".format(args.resume_from))
+        load_initial_weights(model, args.resume_from)
+        initial_epoch = infer_resume_epoch(args.resume_from, args.resume_epoch)
+        print("resumed IRIS0-SPAN from {} at epoch={}".format(args.resume_from, initial_epoch))
 
     model.compile(
         optimizer=keras.optimizers.Adam(args.lr),
         loss="binary_crossentropy",
         metrics=[F1, auroc],
     )
+    last_checkpoint = LastCheckpoint(args.out_dir, save_every=args.save_last_every)
     callbacks = [
-        keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(args.out_dir, "best.h5"),
+        last_checkpoint,
+        DelayedBestCheckpoint(
+            args.out_dir,
             monitor="val_F1",
-            mode="max",
-            save_best_only=True,
-            save_weights_only=True,
-            verbose=1,
+            start_epoch=args.best_save_start_epoch,
+            min_delta=0.0,
         ),
         keras.callbacks.CSVLogger(os.path.join(args.out_dir, "train_log.csv")),
     ]
@@ -137,14 +246,16 @@ def main():
     model.fit(
         train_gen,
         validation_data=val_gen,
+        initial_epoch=initial_epoch,
         epochs=args.epochs,
         workers=args.workers,
         use_multiprocessing=False,
         callbacks=callbacks,
     )
-    model.save_weights(os.path.join(args.out_dir, "last.h5"))
     if not os.path.isfile(os.path.join(args.out_dir, "best.h5")):
         model.save_weights(os.path.join(args.out_dir, "best.h5"))
+        fallback_epoch = last_checkpoint.last_epoch or initial_epoch or args.epochs
+        write_checkpoint_metadata(os.path.join(args.out_dir, "best.h5"), fallback_epoch, {})
 
 
 if __name__ == "__main__":

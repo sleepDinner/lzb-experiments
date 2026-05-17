@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from PIL import Image
 from torch.utils.data import Dataset
 
 
@@ -64,8 +65,10 @@ class LZBPSCCDataset(Dataset):
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
         if mask is None:
             raise FileNotFoundError(mask_path)
-        image = cv2.resize(image, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
-        mask = cv2.resize(mask, (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
+        if image.shape[0] != self.image_size or image.shape[1] != self.image_size:
+            image = np.asarray(Image.fromarray(image).resize((self.image_size, self.image_size), resample=Image.BICUBIC))
+        if mask.shape[0] != self.image_size or mask.shape[1] != self.image_size:
+            mask = np.asarray(Image.fromarray(mask).resize((self.image_size, self.image_size), resample=Image.BICUBIC))
         if self.train:
             image, mask = pscc_default_aug(image, mask)
         image = torch.from_numpy((image.astype(np.float32) / 255.0).transpose(2, 0, 1))

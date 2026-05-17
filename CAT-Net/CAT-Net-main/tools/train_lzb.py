@@ -35,7 +35,9 @@ def parse_args():
     parser.add_argument("--image-size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=5e-3)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--resume-from", default="", help="Resume training from a CAT-Net LZB checkpoint.")
     parser.add_argument("--save-last-every", type=int, default=0, help="Save last checkpoint every N epochs; 0 means final epoch only.")
+    parser.add_argument("--best-save-start-epoch", type=int, default=10, help="Do not write best checkpoints before this epoch.")
     parser.add_argument("--early-stop-min-epochs", type=int, default=20, help="Minimum epochs before early stopping can trigger.")
     parser.add_argument("--early-stop-patience", type=int, default=12, help="Stop after this many epochs without meaningful val_f1 improvement; 0 disables early stopping.")
     parser.add_argument("--early-stop-min-delta", type=float, default=1e-4, help="Minimum val_f1 improvement considered meaningful for early stopping.")
@@ -120,6 +122,22 @@ def save_best_checkpoint(state, out_dir, epoch):
     return filename
 
 
+def load_resume_checkpoint(path, model, optimizer):
+    checkpoint = torch.load(path, map_location="cpu")
+    state_dict = checkpoint.get("state_dict", checkpoint)
+    target = model.module if hasattr(model, "module") else model
+    target.load_state_dict(state_dict)
+    if isinstance(checkpoint, dict) and "optimizer" in checkpoint:
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        print("resumed optimizer state from {}".format(path))
+    else:
+        print("resume checkpoint has no optimizer state; optimizer is reinitialized")
+    start_epoch = int(checkpoint.get("epoch", 0)) if isinstance(checkpoint, dict) else 0
+    best_f1 = float(checkpoint.get("val_f1", -1.0)) if isinstance(checkpoint, dict) else -1.0
+    print("resumed CAT-Net from {} at epoch={} val_f1={:.6f}".format(path, start_epoch, best_f1))
+    return start_epoch, best_f1
+
+
 def main():
     args = parse_args()
     configure(args)
@@ -157,10 +175,14 @@ def main():
     best_f1 = -1.0
     early_best_f1 = -1.0
     epochs_without_improvement = 0
+    start_epoch = 0
+    if args.resume_from:
+        start_epoch, best_f1 = load_resume_checkpoint(args.resume_from, model, optimizer)
+        early_best_f1 = best_f1
     last_state = None
     best_path = os.path.join(args.out_dir, "best.pth.tar")
     last_path = os.path.join(args.out_dir, "last.pth.tar")
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         model.train()
         loss_meter = []
         started = time.time()
@@ -184,6 +206,7 @@ def main():
         state = {
             "epoch": epoch + 1,
             "state_dict": model.module.state_dict(),
+            "optimizer": optimizer.state_dict(),
             "val_f1": val_f1,
             "config": args.cfg,
         }
@@ -191,7 +214,14 @@ def main():
         if args.save_last_every > 0 and (epoch + 1) % args.save_last_every == 0:
             torch.save(state, last_path)
             print("saved periodic last.pth.tar epoch={}".format(epoch + 1))
-        if val_f1 > best_f1:
+        if epoch + 1 < args.best_save_start_epoch:
+            if val_f1 > best_f1:
+                print(
+                    "best candidate epoch={} val_f1={:.6f} not saved before best_save_start_epoch={}".format(
+                        epoch + 1, val_f1, args.best_save_start_epoch
+                    )
+                )
+        elif val_f1 > best_f1:
             best_f1 = val_f1
             best_name = save_best_checkpoint(state, args.out_dir, epoch + 1)
             print("updated {} val_f1={:.6f}".format(best_name, best_f1))

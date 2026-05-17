@@ -35,7 +35,9 @@ def parse_args():
         help="Comma-separated epoch-stage learning rates. Use 'original' for PSCC-Net config or 'none' for fixed --lr.",
     )
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--resume-from", default="", help="Resume training from a PSCC-Net checkpoint directory, prefix, or component file.")
     parser.add_argument("--save-last-every", type=int, default=0, help="Save last checkpoints every N epochs; 0 means final epoch only.")
+    parser.add_argument("--best-save-start-epoch", type=int, default=6, help="Do not write best checkpoints before this epoch.")
     parser.add_argument("--early-stop-min-epochs", type=int, default=8, help="Minimum epochs before early stopping can trigger.")
     parser.add_argument("--early-stop-patience", type=int, default=6, help="Stop after this many epochs without meaningful val_f1 improvement; 0 disables early stopping.")
     parser.add_argument("--early-stop-min-delta", type=float, default=1e-4, help="Minimum val_f1 improvement considered meaningful for early stopping.")
@@ -82,7 +84,7 @@ def pscc_collate(batch):
     return images, masks, labels, list(paths)
 
 
-def save_state(out_dir, FENet, SegNet, ClsNet, epoch, val_f1, lr, name):
+def save_state(out_dir, FENet, SegNet, ClsNet, epoch, val_f1, lr, name, optimizer=None):
     state = {"epoch": epoch, "val_f1": val_f1, "lr": lr}
     paths = {
         "FENet": os.path.join(out_dir, f"{name}_FENet.pth"),
@@ -91,7 +93,10 @@ def save_state(out_dir, FENet, SegNet, ClsNet, epoch, val_f1, lr, name):
     }
     torch.save({**state, "state_dict": FENet.module.state_dict()}, paths["FENet"])
     torch.save({**state, "state_dict": SegNet.module.state_dict()}, paths["SegNet"])
-    torch.save({**state, "state_dict": ClsNet.module.state_dict()}, paths["ClsNet"])
+    cls_state = {**state, "state_dict": ClsNet.module.state_dict()}
+    if optimizer is not None:
+        cls_state["optimizer"] = optimizer.state_dict()
+    torch.save(cls_state, paths["ClsNet"])
     return paths
 
 
@@ -112,11 +117,11 @@ def replace_alias(target_path, alias_path):
     shutil.copy2(target_path, alias_path)
 
 
-def save_best_state(out_dir, FENet, SegNet, ClsNet, epoch, val_f1, lr):
+def save_best_state(out_dir, FENet, SegNet, ClsNet, epoch, val_f1, lr, optimizer=None):
     prefix = "best_epoch{:03d}".format(epoch)
     for old_path in glob.glob(os.path.join(out_dir, "best_epoch*_*.pth")):
         os.remove(old_path)
-    paths = save_state(out_dir, FENet, SegNet, ClsNet, epoch, val_f1, lr, prefix)
+    paths = save_state(out_dir, FENet, SegNet, ClsNet, epoch, val_f1, lr, prefix, optimizer=optimizer)
     for component, path in paths.items():
         replace_alias(path, os.path.join(out_dir, f"best_{component}.pth"))
     return prefix
@@ -162,6 +167,58 @@ def load_pretrained_or_fail(FENet, SegNet, ClsNet):
         print("{} pretrained weight loaded: {}".format(name, path))
 
 
+def resolve_resume_paths(resume_from):
+    path = Path(resume_from)
+    components = ("FENet", "SegNet", "ClsNet")
+    if path.is_dir():
+        for name in ("last", "best"):
+            paths = {component: path / f"{name}_{component}.pth" for component in components}
+            if all(item.is_file() for item in paths.values()):
+                return paths
+        epoch_candidates = sorted(path.glob("best_epoch*_FENet.pth"))
+        for fenet_path in reversed(epoch_candidates):
+            prefix = str(fenet_path)[: -len("_FENet.pth")]
+            paths = {component: Path(f"{prefix}_{component}.pth") for component in components}
+            if all(item.is_file() for item in paths.values()):
+                return paths
+    elif path.is_file() and path.name.endswith("_FENet.pth"):
+        prefix = str(path)[: -len("_FENet.pth")]
+        paths = {component: Path(f"{prefix}_{component}.pth") for component in components}
+        if all(item.is_file() for item in paths.values()):
+            return paths
+    else:
+        paths = {component: Path(f"{resume_from}_{component}.pth") for component in components}
+        if all(item.is_file() for item in paths.values()):
+            return paths
+    raise FileNotFoundError("Could not resolve PSCC-Net resume checkpoint from: {}".format(resume_from))
+
+
+def load_resume_checkpoint(resume_from, FENet, SegNet, ClsNet, optimizer):
+    paths = resolve_resume_paths(resume_from)
+    nets = {"FENet": FENet, "SegNet": SegNet, "ClsNet": ClsNet}
+    checkpoints = {}
+    for component, path in paths.items():
+        checkpoint = torch.load(path, map_location="cpu")
+        checkpoints[component] = checkpoint
+        state_dict = checkpoint.get("state_dict", checkpoint)
+        load_state_dict_flexible(nets[component], state_dict)
+        print("resumed {} from {}".format(component, path))
+    optimizer_loaded = False
+    for checkpoint in checkpoints.values():
+        if isinstance(checkpoint, dict) and "optimizer" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer"])
+            optimizer_loaded = True
+            break
+    if optimizer_loaded:
+        print("resumed optimizer state from PSCC-Net checkpoint")
+    else:
+        print("resume checkpoint has no optimizer state; optimizer is reinitialized")
+    start_epoch = max(int(item.get("epoch", 0)) for item in checkpoints.values() if isinstance(item, dict))
+    best_f1 = max(float(item.get("val_f1", -1.0)) for item in checkpoints.values() if isinstance(item, dict))
+    print("resumed PSCC-Net at epoch={} val_f1={:.6f}".format(start_epoch, best_f1))
+    return start_epoch, best_f1
+
+
 def parse_lr_strategy(value, pscc_args):
     value = str(value).strip()
     if not value or value.lower() in {"none", "fixed", "off"}:
@@ -182,6 +239,16 @@ def lr_for_epoch(epoch, total_epochs, base_lr, lr_strategy):
 def set_optimizer_lr(optimizer, lr):
     for group in optimizer.param_groups:
         group["lr"] = lr
+
+
+def mask_balance(mask):
+    balance = torch.ones_like(mask)
+    if (mask == 1).sum():
+        balance[mask == 1] = 0.5 / ((mask == 1).sum().to(torch.float) / mask.numel())
+        balance[mask == 0] = 0.5 / ((mask == 0).sum().to(torch.float) / mask.numel())
+    else:
+        print("Mask balance is not working!")
+    return balance
 
 
 def main():
@@ -213,15 +280,22 @@ def main():
     ClsNet = torch.nn.DataParallel(ClsNet, device_ids=list(range(torch.cuda.device_count())))
     if args_cli.use_pretrain:
         load_pretrained_or_fail(FENet, SegNet, ClsNet)
-    bce = torch.nn.BCELoss()
-    ce = torch.nn.CrossEntropyLoss()
+    authentic_ratio = float(pscc_args.train_ratio[0])
+    fake_ratio = 1.0 - authentic_ratio
+    ce_weights = torch.tensor([1.0 / authentic_ratio, 1.0 / fake_ratio], dtype=torch.float32).cuda()
+    bce_full = torch.nn.BCELoss(reduction="none")
+    ce = torch.nn.CrossEntropyLoss(weight=ce_weights)
 
     best_f1 = -1.0
     early_best_f1 = -1.0
     epochs_without_improvement = 0
+    start_epoch = 0
+    if args_cli.resume_from:
+        start_epoch, best_f1 = load_resume_checkpoint(args_cli.resume_from, FENet, SegNet, ClsNet, optimizer)
+        early_best_f1 = best_f1
     last_state = None
     best_fenet_path = os.path.join(args_cli.out_dir, "best_FENet.pth")
-    for epoch in range(args_cli.epochs):
+    for epoch in range(start_epoch, args_cli.epochs):
         current_lr = lr_for_epoch(epoch, args_cli.epochs, args_cli.lr, lr_strategy)
         set_optimizer_lr(optimizer, current_lr)
         FENet.train()
@@ -232,8 +306,13 @@ def main():
         for image, mask, cls, _path in progress:
             image = image.cuda(non_blocking=True)
             mask = mask.cuda(non_blocking=True)
+            cls[cls != 0] = 1
             cls = cls.cuda(non_blocking=True)
             mask1, mask2, mask3, mask4 = multiscale_masks(mask)
+            mask1_balance = mask_balance(mask1)
+            mask2_balance = mask_balance(mask2)
+            mask3_balance = mask_balance(mask3)
+            mask4_balance = mask_balance(mask4)
             optimizer.zero_grad()
             feat = FENet(image)
             pred1, pred2, pred3, pred4 = SegNet(feat)
@@ -243,11 +322,11 @@ def main():
             pred4 = match_mask_size(pred4, mask4.unsqueeze(1))
             pred_logit = ClsNet(feat)
             loss = (
-                bce(pred1.squeeze(1), mask1.cuda())
-                + bce(pred2.squeeze(1), mask2.cuda())
-                + bce(pred3.squeeze(1), mask3.cuda())
-                + bce(pred4.squeeze(1), mask4.cuda())
-                + 0.1 * ce(pred_logit, cls)
+                torch.mean(bce_full(pred1.squeeze(1), mask1) * mask1_balance)
+                + torch.mean(bce_full(pred2.squeeze(1), mask2) * mask2_balance)
+                + torch.mean(bce_full(pred3.squeeze(1), mask3) * mask3_balance)
+                + torch.mean(bce_full(pred4.squeeze(1), mask4) * mask4_balance)
+                + ce(pred_logit, cls)
             )
             loss.backward()
             optimizer.step()
@@ -258,11 +337,18 @@ def main():
         print("epoch={} lr={:.8g} loss={:.6f} val_f1={:.6f}".format(epoch + 1, current_lr, float(np.mean(losses)), val_f1))
         last_state = (epoch + 1, val_f1, current_lr)
         if args_cli.save_last_every > 0 and (epoch + 1) % args_cli.save_last_every == 0:
-            save_state(args_cli.out_dir, FENet, SegNet, ClsNet, epoch + 1, val_f1, current_lr, "last")
+            save_state(args_cli.out_dir, FENet, SegNet, ClsNet, epoch + 1, val_f1, current_lr, "last", optimizer=optimizer)
             print("saved periodic last checkpoints epoch={}".format(epoch + 1))
-        if val_f1 > best_f1:
+        if epoch + 1 < args_cli.best_save_start_epoch:
+            if val_f1 > best_f1:
+                print(
+                    "best candidate epoch={} val_f1={:.6f} not saved before best_save_start_epoch={}".format(
+                        epoch + 1, val_f1, args_cli.best_save_start_epoch
+                    )
+                )
+        elif val_f1 > best_f1:
             best_f1 = val_f1
-            best_prefix = save_best_state(args_cli.out_dir, FENet, SegNet, ClsNet, epoch + 1, val_f1, current_lr)
+            best_prefix = save_best_state(args_cli.out_dir, FENet, SegNet, ClsNet, epoch + 1, val_f1, current_lr, optimizer=optimizer)
             print("updated {} checkpoints val_f1={:.6f}".format(best_prefix, best_f1))
         if args_cli.early_stop_patience > 0:
             if val_f1 > early_best_f1 + args_cli.early_stop_min_delta:
@@ -283,10 +369,10 @@ def main():
                     break
     if last_state is not None:
         epoch, val_f1, current_lr = last_state
-        save_state(args_cli.out_dir, FENet, SegNet, ClsNet, epoch, val_f1, current_lr, "last")
+        save_state(args_cli.out_dir, FENet, SegNet, ClsNet, epoch, val_f1, current_lr, "last", optimizer=optimizer)
         print("saved final last checkpoints epoch={}".format(epoch))
         if not os.path.isfile(best_fenet_path):
-            best_prefix = save_best_state(args_cli.out_dir, FENet, SegNet, ClsNet, epoch, val_f1, current_lr)
+            best_prefix = save_best_state(args_cli.out_dir, FENet, SegNet, ClsNet, epoch, val_f1, current_lr, optimizer=optimizer)
             print("best checkpoints were missing; saved {} checkpoints as best".format(best_prefix))
 
 

@@ -1,4 +1,3 @@
-import random
 from pathlib import Path
 
 import cv2
@@ -29,32 +28,6 @@ def normalize_rgb(image_rgb):
     return image
 
 
-def geometric_aug(image, mask):
-    aug_index = random.randrange(8)
-    if aug_index == 1:
-        image = np.rot90(image, 1)
-        mask = np.rot90(mask, 1)
-    elif aug_index == 2:
-        image = np.rot90(image, 2)
-        mask = np.rot90(mask, 2)
-    elif aug_index == 3:
-        image = np.rot90(image, 3)
-        mask = np.rot90(mask, 3)
-    elif aug_index == 4:
-        image = np.flipud(image)
-        mask = np.flipud(mask)
-    elif aug_index == 5:
-        image = np.flipud(np.rot90(image, 1))
-        mask = np.flipud(np.rot90(mask, 1))
-    elif aug_index == 6:
-        image = np.flipud(np.rot90(image, 2))
-        mask = np.flipud(np.rot90(mask, 2))
-    elif aug_index == 7:
-        image = np.flipud(np.rot90(image, 3))
-        mask = np.flipud(np.rot90(mask, 3))
-    return np.ascontiguousarray(image), np.ascontiguousarray(mask)
-
-
 class LZBSegDataset(Dataset):
     def __init__(self, list_file, image_size=512, train=False):
         self.pairs = read_pairs(list_file)
@@ -75,8 +48,6 @@ class LZBSegDataset(Dataset):
             raise FileNotFoundError(mask_path)
         image = cv2.resize(image, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
         mask = cv2.resize(mask, (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
-        if self.train:
-            image, mask = geometric_aug(image, mask)
         image = normalize_rgb(image).transpose(2, 0, 1)
         mask = (mask > 0).astype(np.float32)[None, ...]
         return torch.from_numpy(image), torch.from_numpy(mask), torch.tensor(int(label > 0), dtype=torch.long), image_path

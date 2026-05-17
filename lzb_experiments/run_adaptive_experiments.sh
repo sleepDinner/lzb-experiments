@@ -36,6 +36,19 @@ SPAN_WORKERS="${SPAN_WORKERS:-4}"
 PROFILE_FILE="$WORK_DIR/summary/adaptive_selected_profiles.tsv"
 STREAM_ATTEMPT_LOGS="${STREAM_ATTEMPT_LOGS:-1}"
 REBUILD_LISTS="${REBUILD_LISTS:-0}"
+SKIP_COMPLETED="${SKIP_COMPLETED:-1}"
+RESET_PROFILE_FILE="${RESET_PROFILE_FILE:-0}"
+SAVE_LAST_EVERY="${SAVE_LAST_EVERY:-1}"
+CAT_SAVE_LAST_EVERY="${CAT_SAVE_LAST_EVERY:-$SAVE_LAST_EVERY}"
+MVSS_SAVE_LAST_EVERY="${MVSS_SAVE_LAST_EVERY:-$SAVE_LAST_EVERY}"
+PSCC_SAVE_LAST_EVERY="${PSCC_SAVE_LAST_EVERY:-$SAVE_LAST_EVERY}"
+SPAN_SAVE_LAST_EVERY="${SPAN_SAVE_LAST_EVERY:-$SAVE_LAST_EVERY}"
+MANTRA_SAVE_LAST_EVERY="${MANTRA_SAVE_LAST_EVERY:-$SAVE_LAST_EVERY}"
+CAT_BEST_SAVE_START_EPOCH="${CAT_BEST_SAVE_START_EPOCH:-10}"
+MVSS_BEST_SAVE_START_EPOCH="${MVSS_BEST_SAVE_START_EPOCH:-10}"
+PSCC_BEST_SAVE_START_EPOCH="${PSCC_BEST_SAVE_START_EPOCH:-6}"
+SPAN_BEST_SAVE_START_EPOCH="${SPAN_BEST_SAVE_START_EPOCH:-10}"
+MANTRA_BEST_SAVE_START_EPOCH="${MANTRA_BEST_SAVE_START_EPOCH:-10}"
 
 run_py() {
   local env_spec="$1"
@@ -94,8 +107,78 @@ record_profile() {
   mkdir -p "$(dirname "$PROFILE_FILE")"
   if [[ ! -f "$PROFILE_FILE" ]]; then
     printf "method\timage_size\tbatch_size\tlr\tcheckpoint_dir\tworkers\n" > "$PROFILE_FILE"
+  else
+    local tmp_file
+    tmp_file="${PROFILE_FILE}.tmp"
+    awk -v method="$method" 'NR == 1 || $1 != method' "$PROFILE_FILE" > "$tmp_file"
+    mv "$tmp_file" "$PROFILE_FILE"
   fi
   printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$method" "$image_size" "$batch_size" "$lr" "$out_dir" "$workers" >> "$PROFILE_FILE"
+}
+
+method_outputs_complete() {
+  local method="$1"
+  local result_root="$WORK_DIR/results/$method"
+  local test_result_root="$WORK_DIR/test_results/$method"
+  [[ -s "$result_root/clean.json" ]] || return 1
+  for variant in jpeg_q100 jpeg_q70 jpeg_q50 gaussian_s5 gaussian_s10 gaussian_s15; do
+    [[ -s "$result_root/$variant.json" ]] || return 1
+  done
+  compgen -G "$test_result_root/*.json" > /dev/null || return 1
+}
+
+method_complete() {
+  local method="$1"
+  [[ "$SKIP_COMPLETED" == "1" ]] || return 1
+  method_outputs_complete "$method"
+}
+
+mark_complete() {
+  local method="$1"
+  local checkpoint_dir="$2"
+  local image_size="$3"
+  mkdir -p "$WORK_DIR/completed"
+  {
+    printf "method=%s\n" "$method"
+    printf "checkpoint_dir=%s\n" "$checkpoint_dir"
+    printf "image_size=%s\n" "$image_size"
+    date '+completed_at=%Y-%m-%d %H:%M:%S'
+  } > "$WORK_DIR/completed/${method}.done"
+}
+
+resume_args_for_method() {
+  local method="$1"
+  local out_dir="$2"
+  case "$method" in
+    "CAT-Net")
+      if [[ -s "$out_dir/last.pth.tar" ]]; then
+        printf -- "--resume-from %s" "$out_dir/last.pth.tar"
+      elif [[ -s "$out_dir/best.pth.tar" ]]; then
+        printf -- "--resume-from %s" "$out_dir/best.pth.tar"
+      fi
+      ;;
+    "MVSS-Net"|"ManTraNet")
+      if [[ -s "$out_dir/last.pth" ]]; then
+        printf -- "--resume-from %s" "$out_dir/last.pth"
+      elif [[ -s "$out_dir/best.pth" ]]; then
+        printf -- "--resume-from %s" "$out_dir/best.pth"
+      fi
+      ;;
+    "PSCC-Net")
+      if [[ -s "$out_dir/last_FENet.pth" && -s "$out_dir/last_SegNet.pth" && -s "$out_dir/last_ClsNet.pth" ]]; then
+        printf -- "--resume-from %s" "$out_dir"
+      elif [[ -s "$out_dir/best_FENet.pth" && -s "$out_dir/best_SegNet.pth" && -s "$out_dir/best_ClsNet.pth" ]]; then
+        printf -- "--resume-from %s" "$out_dir"
+      fi
+      ;;
+    "IRIS0-SPAN")
+      if [[ -s "$out_dir/last.h5" ]]; then
+        printf -- "--resume-from %s" "$out_dir/last.h5"
+      elif [[ -s "$out_dir/best.h5" ]]; then
+        printf -- "--resume-from %s" "$out_dir/best.h5"
+      fi
+      ;;
+  esac
 }
 
 train_adaptive() {
@@ -124,8 +207,13 @@ train_adaptive() {
     local out_dir="$WORK_DIR/checkpoints/${checkpoint_prefix}_${image_size}_bs${batch_size}_w${attempt_workers}"
     local log_file="$attempt_root/image${image_size}_bs${batch_size}_w${attempt_workers}_lr${lr}.log"
     mkdir -p "$out_dir"
+    local resume_args
+    resume_args="$(resume_args_for_method "$method" "$out_dir")"
 
     echo "[$method] trying image_size=$image_size batch_size=$batch_size workers=$attempt_workers lr=$lr epochs=$epochs"
+    if [[ -n "$resume_args" ]]; then
+      echo "[$method] resume args: $resume_args"
+    fi
     set +e
     if [[ "$STREAM_ATTEMPT_LOGS" == "1" ]]; then
       run_py "$env_spec" "$PYTHON_BIN" "$train_script" \
@@ -137,6 +225,7 @@ train_adaptive() {
         --image-size "$image_size" \
         --lr "$lr" \
         --workers "$attempt_workers" \
+        $resume_args \
         $extra_args 2>&1 | tee "$log_file"
       local status=${PIPESTATUS[0]}
     else
@@ -149,6 +238,7 @@ train_adaptive() {
         --image-size "$image_size" \
         --lr "$lr" \
         --workers "$attempt_workers" \
+        $resume_args \
         $extra_args > "$log_file" 2>&1
       local status=$?
     fi
@@ -235,75 +325,102 @@ selected_field() {
 
 prepare
 mkdir -p "$WORK_DIR/summary"
-rm -f "$PROFILE_FILE"
+if [[ "$RESET_PROFILE_FILE" == "1" ]]; then
+  rm -f "$PROFILE_FILE"
+fi
 
 # Profiles are ordered from closest-to-original/highest-detail to safer fallbacks.
 # Each entry is image_size,batch_size,lr or image_size,batch_size,lr,workers.
 
-train_adaptive \
-  "CAT-Net" \
-  "${CAT_ENV:-}" \
-  "$ROOT/CAT-Net/CAT-Net-main/tools/train_lzb.py" \
-  "catnet" \
-  "${CAT_PROFILES:-512,22,0.005,4;512,22,0.005,2;512,16,0.005,4;512,16,0.005,2;512,11,0.005,4;512,11,0.005,2;512,8,0.005,4;512,8,0.005,2;512,4,0.005,2;512,4,0.005,0;384,8,0.005,4;384,4,0.005,2;256,8,0.005,4;256,4,0.005,2}" \
-  "$CAT_EPOCHS" \
-  "$CAT_WORKERS" \
-  "--early-stop-min-epochs $CAT_EARLY_STOP_MIN_EPOCHS --early-stop-patience $CAT_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
-cat_img="$(selected_field CAT-Net 1)"
-cat_dir="$(selected_field CAT-Net 4)"
-predict_and_eval "CAT-Net" "${CAT_ENV:-}" "$ROOT/CAT-Net/CAT-Net-main" "tools/predict_lzb.py" "--model-file" "$cat_dir/best.pth.tar" "$cat_img"
+if method_complete "CAT-Net"; then
+  echo "[CAT-Net] completed outputs found; skipping training/test/robust. Set SKIP_COMPLETED=0 to rerun."
+else
+  train_adaptive \
+    "CAT-Net" \
+    "${CAT_ENV:-}" \
+    "$ROOT/CAT-Net/CAT-Net-main/tools/train_lzb.py" \
+    "catnet" \
+    "${CAT_PROFILES:-512,22,0.005,4;512,22,0.005,2;512,16,0.005,4;512,16,0.005,2;512,11,0.005,4;512,11,0.005,2;512,8,0.005,4;512,8,0.005,2;512,4,0.005,2;512,4,0.005,0;384,8,0.005,4;384,4,0.005,2;256,8,0.005,4;256,4,0.005,2}" \
+    "$CAT_EPOCHS" \
+    "$CAT_WORKERS" \
+    "--save-last-every $CAT_SAVE_LAST_EVERY --best-save-start-epoch $CAT_BEST_SAVE_START_EPOCH --early-stop-min-epochs $CAT_EARLY_STOP_MIN_EPOCHS --early-stop-patience $CAT_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
+  cat_img="$(selected_field CAT-Net 1)"
+  cat_dir="$(selected_field CAT-Net 4)"
+  predict_and_eval "CAT-Net" "${CAT_ENV:-}" "$ROOT/CAT-Net/CAT-Net-main" "tools/predict_lzb.py" "--model-file" "$cat_dir/best.pth.tar" "$cat_img"
+  mark_complete "CAT-Net" "$cat_dir" "$cat_img"
+fi
 
-train_adaptive \
-  "MVSS-Net" \
-  "${MVSS_ENV:-}" \
-  "$ROOT/MVSS-Net/MVSS-Net-master/train_lzb.py" \
-  "mvssnet" \
-  "512,8,0.0001;512,4,0.0001;512,2,0.0001;512,1,0.0001;384,8,0.0001;384,4,0.0001;256,8,0.0001;256,4,0.0001" \
-  "$MVSS_EPOCHS" \
-  "$WORKERS" \
-  "--early-stop-min-epochs $MVSS_EARLY_STOP_MIN_EPOCHS --early-stop-patience $MVSS_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
-mvss_img="$(selected_field MVSS-Net 1)"
-mvss_dir="$(selected_field MVSS-Net 4)"
-predict_and_eval "MVSS-Net" "${MVSS_ENV:-}" "$ROOT/MVSS-Net/MVSS-Net-master" "predict_lzb.py" "--model-file" "$mvss_dir/best.pth" "$mvss_img"
+if method_complete "MVSS-Net"; then
+  echo "[MVSS-Net] completed outputs found; skipping training/test/robust. Set SKIP_COMPLETED=0 to rerun."
+else
+  train_adaptive \
+    "MVSS-Net" \
+    "${MVSS_ENV:-}" \
+    "$ROOT/MVSS-Net/MVSS-Net-master/train_lzb.py" \
+    "mvssnet" \
+    "${MVSS_PROFILES:-512,8,0.0001;512,4,0.0001;512,2,0.0001;512,1,0.0001;384,8,0.0001;384,4,0.0001;256,8,0.0001;256,4,0.0001}" \
+    "$MVSS_EPOCHS" \
+    "$WORKERS" \
+    "--save-last-every $MVSS_SAVE_LAST_EVERY --best-save-start-epoch $MVSS_BEST_SAVE_START_EPOCH --early-stop-min-epochs $MVSS_EARLY_STOP_MIN_EPOCHS --early-stop-patience $MVSS_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
+  mvss_img="$(selected_field MVSS-Net 1)"
+  mvss_dir="$(selected_field MVSS-Net 4)"
+  predict_and_eval "MVSS-Net" "${MVSS_ENV:-}" "$ROOT/MVSS-Net/MVSS-Net-master" "predict_lzb.py" "--model-file" "$mvss_dir/best.pth" "$mvss_img"
+  mark_complete "MVSS-Net" "$mvss_dir" "$mvss_img"
+fi
 
-train_adaptive \
-  "PSCC-Net" \
-  "${PSCC_ENV:-}" \
-  "$ROOT/PSCC-Net/PSCC-Net-main/train_lzb.py" \
-  "psccnet" \
-  "256,10,0.0002;256,8,0.0002;256,4,0.0002;256,2,0.0002;256,1,0.0002" \
-  "$PSCC_EPOCHS" \
-  "$WORKERS" \
-  "--early-stop-min-epochs $PSCC_EARLY_STOP_MIN_EPOCHS --early-stop-patience $PSCC_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
-pscc_img="$(selected_field PSCC-Net 1)"
-pscc_dir="$(selected_field PSCC-Net 4)"
-predict_and_eval "PSCC-Net" "${PSCC_ENV:-}" "$ROOT/PSCC-Net/PSCC-Net-main" "predict_lzb.py" "--checkpoint-dir" "$pscc_dir" "$pscc_img"
+if method_complete "PSCC-Net"; then
+  echo "[PSCC-Net] completed outputs found; skipping training/test/robust. Set SKIP_COMPLETED=0 to rerun."
+else
+  train_adaptive \
+    "PSCC-Net" \
+    "${PSCC_ENV:-}" \
+    "$ROOT/PSCC-Net/PSCC-Net-main/train_lzb.py" \
+    "psccnet" \
+    "${PSCC_PROFILES:-256,10,0.0002;256,8,0.0002;256,4,0.0002;256,2,0.0002;256,1,0.0002}" \
+    "$PSCC_EPOCHS" \
+    "$WORKERS" \
+    "--save-last-every $PSCC_SAVE_LAST_EVERY --best-save-start-epoch $PSCC_BEST_SAVE_START_EPOCH --early-stop-min-epochs $PSCC_EARLY_STOP_MIN_EPOCHS --early-stop-patience $PSCC_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
+  pscc_img="$(selected_field PSCC-Net 1)"
+  pscc_dir="$(selected_field PSCC-Net 4)"
+  predict_and_eval "PSCC-Net" "${PSCC_ENV:-}" "$ROOT/PSCC-Net/PSCC-Net-main" "predict_lzb.py" "--checkpoint-dir" "$pscc_dir" "$pscc_img"
+  mark_complete "PSCC-Net" "$pscc_dir" "$pscc_img"
+fi
 
-train_adaptive \
-  "IRIS0-SPAN" \
-  "${SPAN_ENV:-}" \
-  "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main/train_lzb.py" \
-  "span" \
-  "${SPAN_PROFILES:-512,8,0.0001;512,6,0.0001;512,4,0.0001;512,2,0.0001;512,1,0.0001;384,8,0.0001;384,6,0.0001;384,4,0.0001;384,2,0.0001;384,1,0.0001;256,8,0.0001;256,6,0.0001;256,4,0.0001;256,2,0.0001;256,1,0.0001}" \
-  "$SPAN_EPOCHS" \
-  "$SPAN_WORKERS" \
-  "--early-stop-min-epochs $SPAN_EARLY_STOP_MIN_EPOCHS --early-stop-patience $SPAN_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
-span_img="$(selected_field IRIS0-SPAN 1)"
-span_dir="$(selected_field IRIS0-SPAN 4)"
-predict_and_eval "IRIS0-SPAN" "${SPAN_ENV:-}" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main" "predict_lzb.py" "--model-file" "$span_dir/best.h5" "$span_img"
+if method_complete "IRIS0-SPAN"; then
+  echo "[IRIS0-SPAN] completed outputs found; skipping training/test/robust. Set SKIP_COMPLETED=0 to rerun."
+else
+  train_adaptive \
+    "IRIS0-SPAN" \
+    "${SPAN_ENV:-}" \
+    "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main/train_lzb.py" \
+    "span" \
+    "${SPAN_PROFILES:-512,8,0.0001;512,6,0.0001;512,4,0.0001;512,2,0.0001;512,1,0.0001;384,8,0.0001;384,6,0.0001;384,4,0.0001;384,2,0.0001;384,1,0.0001;256,8,0.0001;256,6,0.0001;256,4,0.0001;256,2,0.0001;256,1,0.0001}" \
+    "$SPAN_EPOCHS" \
+    "$SPAN_WORKERS" \
+    "--save-last-every $SPAN_SAVE_LAST_EVERY --best-save-start-epoch $SPAN_BEST_SAVE_START_EPOCH --early-stop-min-epochs $SPAN_EARLY_STOP_MIN_EPOCHS --early-stop-patience $SPAN_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
+  span_img="$(selected_field IRIS0-SPAN 1)"
+  span_dir="$(selected_field IRIS0-SPAN 4)"
+  predict_and_eval "IRIS0-SPAN" "${SPAN_ENV:-}" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main" "predict_lzb.py" "--model-file" "$span_dir/best.h5" "$span_img"
+  mark_complete "IRIS0-SPAN" "$span_dir" "$span_img"
+fi
 
-train_adaptive \
-  "ManTraNet" \
-  "${MANTRA_ENV:-}" \
-  "$ROOT/ManTraNet/ManTraNet-pytorch-main/train_lzb.py" \
-  "mantranet" \
-  "${MANTRA_PROFILES:-512,8,0.00001;512,6,0.00001;512,4,0.00001;512,2,0.00001;512,1,0.00001;384,8,0.00001;384,6,0.00001;384,4,0.00001;384,2,0.00001;384,1,0.00001;256,8,0.00001;256,6,0.00001;256,4,0.00001;256,2,0.00001;256,1,0.00001}" \
-  "$MANTRA_EPOCHS" \
-  "$WORKERS" \
-  "--early-stop-min-epochs $MANTRA_EARLY_STOP_MIN_EPOCHS --early-stop-patience $MANTRA_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
-mantra_img="$(selected_field ManTraNet 1)"
-mantra_dir="$(selected_field ManTraNet 4)"
-predict_and_eval "ManTraNet" "${MANTRA_ENV:-}" "$ROOT/ManTraNet/ManTraNet-pytorch-main" "predict_lzb.py" "--model-file" "$mantra_dir/best.pth" "$mantra_img"
+if method_complete "ManTraNet"; then
+  echo "[ManTraNet] completed outputs found; skipping training/test/robust. Set SKIP_COMPLETED=0 to rerun."
+else
+  train_adaptive \
+    "ManTraNet" \
+    "${MANTRA_ENV:-}" \
+    "$ROOT/ManTraNet/ManTraNet-pytorch-main/train_lzb.py" \
+    "mantranet" \
+    "${MANTRA_PROFILES:-512,8,0.00001;512,6,0.00001;512,4,0.00001;512,2,0.00001;512,1,0.00001;384,8,0.00001;384,6,0.00001;384,4,0.00001;384,2,0.00001;384,1,0.00001;256,8,0.00001;256,6,0.00001;256,4,0.00001;256,2,0.00001;256,1,0.00001}" \
+    "$MANTRA_EPOCHS" \
+    "$WORKERS" \
+    "--save-last-every $MANTRA_SAVE_LAST_EVERY --best-save-start-epoch $MANTRA_BEST_SAVE_START_EPOCH --early-stop-min-epochs $MANTRA_EARLY_STOP_MIN_EPOCHS --early-stop-patience $MANTRA_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
+  mantra_img="$(selected_field ManTraNet 1)"
+  mantra_dir="$(selected_field ManTraNet 4)"
+  predict_and_eval "ManTraNet" "${MANTRA_ENV:-}" "$ROOT/ManTraNet/ManTraNet-pytorch-main" "predict_lzb.py" "--model-file" "$mantra_dir/best.pth" "$mantra_img"
+  mark_complete "ManTraNet" "$mantra_dir" "$mantra_img"
+fi
 
 "$PYTHON_BIN" -m lzb_experiments.summarize_results \
   --results-dir "$WORK_DIR/results" \
