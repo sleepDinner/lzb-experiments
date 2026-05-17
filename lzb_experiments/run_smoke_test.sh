@@ -18,6 +18,7 @@ MANTRA_BATCH_SIZE="${MANTRA_BATCH_SIZE:-1}"
 SMOKE_TRAIN_SAMPLES="${SMOKE_TRAIN_SAMPLES:-4}"
 SMOKE_VAL_SAMPLES="${SMOKE_VAL_SAMPLES:-2}"
 SMOKE_TEST_SAMPLES="${SMOKE_TEST_SAMPLES:-2}"
+REBUILD_LISTS="${REBUILD_LISTS:-0}"
 
 run_py() {
   local env_spec="$1"
@@ -33,12 +34,39 @@ run_py() {
   fi
 }
 
+base_lists_ready() {
+  [[ -s "$WORK_DIR/lists/filter_report.json" ]] || return 1
+  [[ -s "$WORK_DIR/lists/train.txt" ]] || return 1
+  [[ -s "$WORK_DIR/lists/val.txt" ]] || return 1
+  [[ -s "$WORK_DIR/lists/tests/${ROBUST_DATASET}.txt" ]] || return 1
+  [[ -s "$WORK_DIR/lists/robust/${ROBUST_DATASET}_jpeg_q70.txt" ]] || return 1
+}
+
+smoke_lists_ready() {
+  local smoke_dir="$WORK_DIR/lists/smoke"
+  [[ -s "$smoke_dir/train.txt" ]] || return 1
+  [[ -s "$smoke_dir/val.txt" ]] || return 1
+  [[ -s "$smoke_dir/${ROBUST_DATASET}_clean.txt" ]] || return 1
+  [[ -s "$smoke_dir/${ROBUST_DATASET}_jpeg_q70.txt" ]] || return 1
+}
+
 make_smoke_lists() {
-  "$PYTHON_BIN" -m lzb_experiments.prepare_lists \
-    --train-root "$TRAIN_ROOT" \
-    --test-json "$TEST_JSON" \
-    --work-dir "$WORK_DIR" \
-    --robust-dataset "$ROBUST_DATASET"
+  if [[ "$REBUILD_LISTS" != "1" ]] && smoke_lists_ready; then
+    echo "Reusing existing smoke lists under: $WORK_DIR/lists/smoke"
+    echo "Set REBUILD_LISTS=1 to rebuild base and smoke lists."
+    return 0
+  fi
+
+  if [[ "$REBUILD_LISTS" != "1" ]] && base_lists_ready; then
+    echo "Reusing existing base lists under: $WORK_DIR/lists"
+  else
+    echo "Preparing base train/val/test/robust lists under: $WORK_DIR/lists"
+    "$PYTHON_BIN" -m lzb_experiments.prepare_lists \
+      --train-root "$TRAIN_ROOT" \
+      --test-json "$TEST_JSON" \
+      --work-dir "$WORK_DIR" \
+      --robust-dataset "$ROBUST_DATASET"
+  fi
 
   local smoke_dir="$WORK_DIR/lists/smoke"
   mkdir -p "$smoke_dir"
