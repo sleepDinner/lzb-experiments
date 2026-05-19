@@ -1,6 +1,7 @@
 import argparse
 import glob
 import os
+import random
 import shutil
 import sys
 import time
@@ -33,8 +34,9 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--image-size", type=int, default=512)
-    parser.add_argument("--lr", type=float, default=5e-3)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--resume-from", default="", help="Resume training from a CAT-Net LZB checkpoint.")
     parser.add_argument("--save-last-every", type=int, default=0, help="Save last checkpoint every N epochs; 0 means final epoch only.")
     parser.add_argument("--best-save-start-epoch", type=int, default=10, help="Do not write best checkpoints before this epoch.")
@@ -44,6 +46,21 @@ def parse_args():
     parser.add_argument("--no-pretrain", dest="use_pretrain", action="store_false")
     parser.set_defaults(use_pretrain=True)
     return parser.parse_args()
+
+
+def seed_everything(seed):
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
 
 
 def configure(args):
@@ -140,6 +157,7 @@ def load_resume_checkpoint(path, model, optimizer):
 
 def main():
     args = parse_args()
+    seed_everything(args.seed)
     configure(args)
     if args.use_pretrain:
         for weight_path in (config.MODEL.PRETRAINED_RGB, config.MODEL.PRETRAINED_DCT):
@@ -163,8 +181,10 @@ def main():
         read_from_jpeg=True,
         resize_to=(args.image_size, args.image_size),
     )
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True, collate_fn=cat_collate)
-    val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=max(0, args.workers // 2), pin_memory=True, collate_fn=cat_collate)
+    generator = torch.Generator()
+    generator.manual_seed(args.seed)
+    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True, collate_fn=cat_collate, worker_init_fn=seed_worker, generator=generator)
+    val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=max(0, args.workers // 2), pin_memory=True, collate_fn=cat_collate, worker_init_fn=seed_worker)
 
     model = eval("models." + config.MODEL.NAME + ".get_seg_model")(config)
     device_ids = list(range(torch.cuda.device_count()))
@@ -178,6 +198,9 @@ def main():
     start_epoch = 0
     if args.resume_from:
         start_epoch, best_f1 = load_resume_checkpoint(args.resume_from, model, optimizer)
+        for group in optimizer.param_groups:
+            group["lr"] = args.lr
+        print("CAT-Net optimizer lr set to {}".format(args.lr))
         early_best_f1 = best_f1
     last_state = None
     best_path = os.path.join(args.out_dir, "best.pth.tar")

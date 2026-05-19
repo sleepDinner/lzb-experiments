@@ -2,6 +2,7 @@ import argparse
 import glob
 import json
 import os
+import random
 import re
 import shutil
 from pathlib import Path
@@ -10,6 +11,7 @@ from keras_compat import apply_compat
 apply_compat()
 
 import keras
+import numpy as np
 
 from lzb_data import LZBSequence
 from models import ManTraNetv3 as mm
@@ -27,10 +29,11 @@ def parse_args():
     parser.add_argument("--mantranet-pretrain", default="pretrained_weights/ManTraNet_Ptrain4.h5")
     parser.add_argument("--init-weight", default="PixelAttention32.h5")
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--image-size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--resume-from", default="", help="Resume training from an IRIS0-SPAN .h5 checkpoint.")
     parser.add_argument("--resume-epoch", type=int, default=-1, help="Epoch to resume from when checkpoint metadata is unavailable.")
     parser.add_argument("--save-last-every", type=int, default=1, help="Save last.h5 every N epochs; 0 means final epoch only.")
@@ -39,6 +42,20 @@ def parse_args():
     parser.add_argument("--early-stop-patience", type=int, default=15, help="Stop after this many epochs without meaningful val_F1 improvement; 0 disables early stopping.")
     parser.add_argument("--early-stop-min-delta", type=float, default=1e-4, help="Minimum val_F1 improvement considered meaningful for early stopping.")
     return parser.parse_args()
+
+
+def seed_everything(seed):
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
+    random.seed(seed)
+    np.random.seed(seed)
+    try:
+        keras.utils.set_random_seed(seed)
+    except AttributeError:
+        try:
+            import tensorflow as tf
+            tf.random.set_seed(seed)
+        except ImportError:
+            pass
 
 
 def load_initial_weights(model, weight_path):
@@ -193,6 +210,7 @@ class MinEpochEarlyStopping(keras.callbacks.Callback):
 
 def main():
     args = parse_args()
+    seed_everything(args.seed)
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
 
     mm.json = json

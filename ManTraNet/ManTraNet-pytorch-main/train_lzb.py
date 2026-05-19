@@ -1,6 +1,7 @@
 import argparse
 import glob
 import os
+import random
 import shutil
 import sys
 from pathlib import Path
@@ -64,10 +65,11 @@ def parse_args():
     parser.add_argument("--val-list", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--batch-size", type=int, default=2)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--init-weight", default=str(MODEL_DIR / "MantraNetv4.pt"))
     parser.add_argument("--resume-from", default="", help="Resume training from a ManTraNet LZB checkpoint.")
     parser.add_argument("--save-last-every", type=int, default=0, help="Save last checkpoint every N epochs; 0 means final epoch only.")
@@ -78,6 +80,21 @@ def parse_args():
     parser.add_argument("--no-pretrain", dest="use_pretrain", action="store_false")
     parser.set_defaults(use_pretrain=True)
     return parser.parse_args()
+
+
+def seed_everything(seed):
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
 
 
 def pixel_f1(prob, mask):
@@ -158,13 +175,16 @@ def load_resume_checkpoint(path, model, optimizer):
 
 def main():
     args = parse_args()
+    seed_everything(args.seed)
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     train_set = LZBManTraDataset(args.train_list, args.image_size, train=True)
     val_set = LZBManTraDataset(args.val_list, args.image_size, train=False)
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True, collate_fn=mantra_collate)
-    val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=max(0, args.workers // 2), pin_memory=True, collate_fn=mantra_collate)
+    generator = torch.Generator()
+    generator.manual_seed(args.seed)
+    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True, collate_fn=mantra_collate, worker_init_fn=seed_worker, generator=generator)
+    val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=max(0, args.workers // 2), pin_memory=True, collate_fn=mantra_collate, worker_init_fn=seed_worker)
 
     model = load_model(args.init_weight, use_pretrain=args.use_pretrain)
     move_plain_tensors(model, device)

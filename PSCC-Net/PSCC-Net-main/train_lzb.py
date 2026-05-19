@@ -1,6 +1,7 @@
 import argparse
 import glob
 import os
+import random
 import shutil
 from pathlib import Path
 
@@ -35,6 +36,7 @@ def parse_args():
         help="Comma-separated epoch-stage learning rates. Use 'original' for PSCC-Net config or 'none' for fixed --lr.",
     )
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--resume-from", default="", help="Resume training from a PSCC-Net checkpoint directory, prefix, or component file.")
     parser.add_argument("--save-last-every", type=int, default=0, help="Save last checkpoints every N epochs; 0 means final epoch only.")
     parser.add_argument("--best-save-start-epoch", type=int, default=6, help="Do not write best checkpoints before this epoch.")
@@ -44,6 +46,21 @@ def parse_args():
     parser.add_argument("--no-pretrain", dest="use_pretrain", action="store_false")
     parser.set_defaults(use_pretrain=True)
     return parser.parse_args()
+
+
+def seed_everything(seed):
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
 
 
 def pixel_f1(prob, mask):
@@ -253,6 +270,7 @@ def mask_balance(mask):
 
 def main():
     args_cli = parse_args()
+    seed_everything(args_cli.seed)
     Path(args_cli.out_dir).mkdir(parents=True, exist_ok=True)
     pscc_args = get_pscc_args()
     pscc_args.defrost()
@@ -267,8 +285,10 @@ def main():
 
     train_set = LZBPSCCDataset(args_cli.train_list, args_cli.image_size, train=True)
     val_set = LZBPSCCDataset(args_cli.val_list, args_cli.image_size, train=False)
-    train_loader = DataLoader(train_set, batch_size=args_cli.batch_size, shuffle=True, num_workers=args_cli.workers, pin_memory=True, collate_fn=pscc_collate)
-    val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=max(0, args_cli.workers // 2), pin_memory=True, collate_fn=pscc_collate)
+    generator = torch.Generator()
+    generator.manual_seed(args_cli.seed)
+    train_loader = DataLoader(train_set, batch_size=args_cli.batch_size, shuffle=True, num_workers=args_cli.workers, pin_memory=True, collate_fn=pscc_collate, worker_init_fn=seed_worker, generator=generator)
+    val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=max(0, args_cli.workers // 2), pin_memory=True, collate_fn=pscc_collate, worker_init_fn=seed_worker)
 
     FENet = get_seg_model(get_hrnet_cfg()).cuda()
     SegNet = NLCDetection(pscc_args).cuda()

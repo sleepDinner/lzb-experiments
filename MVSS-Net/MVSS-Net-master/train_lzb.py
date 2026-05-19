@@ -1,6 +1,7 @@
 import argparse
 import glob
 import os
+import random
 import shutil
 from pathlib import Path
 
@@ -22,10 +23,11 @@ def parse_args():
     parser.add_argument("--val-list", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--image-size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--init-weight", default="ckpt/mvssnet.pth")
     parser.add_argument("--resume-from", default="", help="Resume training from an MVSS-Net LZB checkpoint.")
     parser.add_argument("--save-last-every", type=int, default=0, help="Save last checkpoint every N epochs; 0 means final epoch only.")
@@ -34,6 +36,21 @@ def parse_args():
     parser.add_argument("--early-stop-patience", type=int, default=10, help="Stop after this many epochs without meaningful val_f1 improvement; 0 disables early stopping.")
     parser.add_argument("--early-stop-min-delta", type=float, default=1e-4, help="Minimum val_f1 improvement considered meaningful for early stopping.")
     return parser.parse_args()
+
+
+def seed_everything(seed):
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
 
 
 def pixel_f1(prob, mask):
@@ -112,11 +129,14 @@ def load_resume_checkpoint(path, model, optimizer):
 
 def main():
     args = parse_args()
+    seed_everything(args.seed)
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
     train_set = LZBSegDataset(args.train_list, args.image_size, train=True)
     val_set = LZBSegDataset(args.val_list, args.image_size, train=False)
-    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True, collate_fn=seg_collate)
-    val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=max(0, args.workers // 2), pin_memory=True, collate_fn=seg_collate)
+    generator = torch.Generator()
+    generator.manual_seed(args.seed)
+    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True, collate_fn=seg_collate, worker_init_fn=seed_worker, generator=generator)
+    val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=max(0, args.workers // 2), pin_memory=True, collate_fn=seg_collate, worker_init_fn=seed_worker)
 
     model = get_mvss(backbone="resnet50", pretrained_base=True, nclass=1, sobel=True, constrain=True, n_input=3)
     if args.init_weight:

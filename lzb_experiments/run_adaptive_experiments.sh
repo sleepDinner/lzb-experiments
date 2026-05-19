@@ -13,6 +13,8 @@ export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
+SEED="${SEED:-2026}"
+export PYTHONHASHSEED="${PYTHONHASHSEED:-$SEED}"
 GLOBAL_EPOCHS="${EPOCHS:-}"
 CAT_EPOCHS="${CAT_EPOCHS:-${GLOBAL_EPOCHS:-200}}"
 MVSS_EPOCHS="${MVSS_EPOCHS:-${GLOBAL_EPOCHS:-100}}"
@@ -87,7 +89,8 @@ prepare() {
     --train-root "$TRAIN_ROOT" \
     --test-json "$TEST_JSON" \
     --work-dir "$WORK_DIR" \
-    --robust-dataset "$ROBUST_DATASET"
+    --robust-dataset "$ROBUST_DATASET" \
+    --seed "$SEED"
 }
 
 is_oom_log() {
@@ -225,6 +228,7 @@ train_adaptive() {
         --image-size "$image_size" \
         --lr "$lr" \
         --workers "$attempt_workers" \
+        --seed "$SEED" \
         $resume_args \
         $extra_args 2>&1 | tee "$log_file"
       local status=${PIPESTATUS[0]}
@@ -238,6 +242,7 @@ train_adaptive() {
         --image-size "$image_size" \
         --lr "$lr" \
         --workers "$attempt_workers" \
+        --seed "$SEED" \
         $resume_args \
         $extra_args > "$log_file" 2>&1
       local status=$?
@@ -344,7 +349,7 @@ else
     "${CAT_ENV:-}" \
     "$ROOT/CAT-Net/CAT-Net-main/tools/train_lzb.py" \
     "catnet" \
-    "${CAT_PROFILES:-512,22,0.005,2;512,16,0.005,4;512,16,0.005,2;512,11,0.005,4;512,11,0.005,2;512,8,0.005,4;512,8,0.005,2;512,4,0.005,2;512,4,0.005,0;384,8,0.005,4;384,4,0.005,2;256,8,0.005,4;256,4,0.005,2}" \
+    "${CAT_PROFILES:-512,22,0.0001,2;512,16,0.0001,4;512,16,0.0001,2;512,11,0.0001,4;512,11,0.0001,2;512,8,0.0001,4;512,8,0.0001,2;512,4,0.0001,2;512,4,0.0001,0;384,8,0.0001,4;384,4,0.0001,2;256,8,0.0001,4;256,4,0.0001,2}" \
     "$CAT_EPOCHS" \
     "$CAT_WORKERS" \
     "--save-last-every $CAT_SAVE_LAST_EVERY --best-save-start-epoch $CAT_BEST_SAVE_START_EPOCH --early-stop-min-epochs $CAT_EARLY_STOP_MIN_EPOCHS --early-stop-patience $CAT_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
@@ -363,7 +368,7 @@ else
     "${MVSS_ENV:-}" \
     "$ROOT/MVSS-Net/MVSS-Net-master/train_lzb.py" \
     "mvssnet" \
-    "${MVSS_PROFILES:-512,8,0.0001;512,4,0.0001;512,2,0.0001;512,1,0.0001;384,8,0.0001;384,4,0.0001;256,8,0.0001;256,4,0.0001}" \
+    "${MVSS_PROFILES:-512,16,0.0001;512,12,0.0001;512,8,0.0001;512,6,0.0001;512,4,0.0001;512,2,0.0001;384,16,0.0001;384,12,0.0001;384,8,0.0001;384,6,0.0001;384,4,0.0001;384,2,0.0001;256,16,0.0001;256,12,0.0001;256,8,0.0001;256,6,0.0001;256,4,0.0001;256,2,0.0001}" \
     "$MVSS_EPOCHS" \
     "$WORKERS" \
     "--save-last-every $MVSS_SAVE_LAST_EVERY --best-save-start-epoch $MVSS_BEST_SAVE_START_EPOCH --early-stop-min-epochs $MVSS_EARLY_STOP_MIN_EPOCHS --early-stop-patience $MVSS_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
@@ -401,7 +406,7 @@ else
     "${SPAN_ENV:-}" \
     "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main/train_lzb.py" \
     "span" \
-    "${SPAN_PROFILES:-512,8,0.0001;512,6,0.0001;512,4,0.0001;512,2,0.0001;512,1,0.0001;384,8,0.0001;384,6,0.0001;384,4,0.0001;384,2,0.0001;384,1,0.0001;256,8,0.0001;256,6,0.0001;256,4,0.0001;256,2,0.0001;256,1,0.0001}" \
+    "${SPAN_PROFILES:-512,16,0.0001;512,12,0.0001;512,8,0.0001;512,6,0.0001;512,4,0.0001;512,2,0.0001;384,16,0.0001;384,12,0.0001;384,8,0.0001;384,6,0.0001;384,4,0.0001;384,2,0.0001;256,16,0.0001;256,12,0.0001;256,8,0.0001;256,6,0.0001;256,4,0.0001;256,2,0.0001}" \
     "$SPAN_EPOCHS" \
     "$SPAN_WORKERS" \
     "--save-last-every $SPAN_SAVE_LAST_EVERY --best-save-start-epoch $SPAN_BEST_SAVE_START_EPOCH --early-stop-min-epochs $SPAN_EARLY_STOP_MIN_EPOCHS --early-stop-patience $SPAN_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"
@@ -420,7 +425,7 @@ else
     "${MANTRA_ENV:-}" \
     "$ROOT/ManTraNet/ManTraNet-pytorch-main/train_lzb.py" \
     "mantranet" \
-    "${MANTRA_PROFILES:-512,8,0.00001;512,6,0.00001;512,4,0.00001;512,2,0.00001;512,1,0.00001;384,8,0.00001;384,6,0.00001;384,4,0.00001;384,2,0.00001;384,1,0.00001;256,8,0.00001;256,6,0.00001;256,4,0.00001;256,2,0.00001;256,1,0.00001}" \
+    "${MANTRA_PROFILES:-512,16,0.00001;512,12,0.00001;512,8,0.00001;512,6,0.00001;512,4,0.00001;512,2,0.00001;384,16,0.00001;384,12,0.00001;384,8,0.00001;384,6,0.00001;384,4,0.00001;384,2,0.00001;256,16,0.00001;256,12,0.00001;256,8,0.00001;256,6,0.00001;256,4,0.00001;256,2,0.00001}" \
     "$MANTRA_EPOCHS" \
     "$WORKERS" \
     "--save-last-every $MANTRA_SAVE_LAST_EVERY --best-save-start-epoch $MANTRA_BEST_SAVE_START_EPOCH --early-stop-min-epochs $MANTRA_EARLY_STOP_MIN_EPOCHS --early-stop-patience $MANTRA_EARLY_STOP_PATIENCE --early-stop-min-delta $EARLY_STOP_MIN_DELTA"

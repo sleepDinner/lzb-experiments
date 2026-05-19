@@ -12,6 +12,8 @@ export TF_FORCE_GPU_ALLOW_GROWTH="${TF_FORCE_GPU_ALLOW_GROWTH:-true}"
 export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
+SEED="${SEED:-2026}"
+export PYTHONHASHSEED="${PYTHONHASHSEED:-$SEED}"
 IMAGE_SIZE="${IMAGE_SIZE:-256}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 MANTRA_BATCH_SIZE="${MANTRA_BATCH_SIZE:-1}"
@@ -65,7 +67,8 @@ make_smoke_lists() {
       --train-root "$TRAIN_ROOT" \
       --test-json "$TEST_JSON" \
       --work-dir "$WORK_DIR" \
-      --robust-dataset "$ROBUST_DATASET"
+      --robust-dataset "$ROBUST_DATASET" \
+      --seed "$SEED"
   fi
 
   local smoke_dir="$WORK_DIR/lists/smoke"
@@ -124,7 +127,8 @@ run_py "${CAT_ENV:-}" "$PYTHON_BIN" "$ROOT/CAT-Net/CAT-Net-main/tools/train_lzb.
   --epochs 1 \
   --batch-size "$BATCH_SIZE" \
   --image-size "$IMAGE_SIZE" \
-  --workers 0
+  --workers 0 \
+  --seed "$SEED"
 predict_eval_smoke "CAT-Net" "${CAT_ENV:-}" "$ROOT/CAT-Net/CAT-Net-main" "tools/predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/catnet/best.pth.tar" "$BATCH_SIZE"
 
 run_py "${MVSS_ENV:-}" "$PYTHON_BIN" "$ROOT/MVSS-Net/MVSS-Net-master/train_lzb.py" \
@@ -134,7 +138,8 @@ run_py "${MVSS_ENV:-}" "$PYTHON_BIN" "$ROOT/MVSS-Net/MVSS-Net-master/train_lzb.p
   --epochs 1 \
   --batch-size "$BATCH_SIZE" \
   --image-size "$IMAGE_SIZE" \
-  --workers 0
+  --workers 0 \
+  --seed "$SEED"
 predict_eval_smoke "MVSS-Net" "${MVSS_ENV:-}" "$ROOT/MVSS-Net/MVSS-Net-master" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/mvssnet/best.pth" "$BATCH_SIZE"
 
 run_py "${PSCC_ENV:-}" "$PYTHON_BIN" "$ROOT/PSCC-Net/PSCC-Net-main/train_lzb.py" \
@@ -144,7 +149,8 @@ run_py "${PSCC_ENV:-}" "$PYTHON_BIN" "$ROOT/PSCC-Net/PSCC-Net-main/train_lzb.py"
   --epochs 1 \
   --batch-size "$BATCH_SIZE" \
   --image-size "$IMAGE_SIZE" \
-  --workers 0
+  --workers 0 \
+  --seed "$SEED"
 predict_eval_smoke "PSCC-Net" "${PSCC_ENV:-}" "$ROOT/PSCC-Net/PSCC-Net-main" "predict_lzb.py" "--checkpoint-dir" "$WORK_DIR/checkpoints_smoke/psccnet" "$BATCH_SIZE"
 
 run_py "${SPAN_ENV:-}" "$PYTHON_BIN" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main/train_lzb.py" \
@@ -154,7 +160,8 @@ run_py "${SPAN_ENV:-}" "$PYTHON_BIN" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main/train_lzb
   --epochs 1 \
   --batch-size 1 \
   --image-size "$IMAGE_SIZE" \
-  --workers 0
+  --workers 0 \
+  --seed "$SEED"
 predict_eval_smoke "IRIS0-SPAN" "${SPAN_ENV:-}" "$ROOT/IRIS0-SPAN/IRIS0-SPAN-main" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/span/best.h5" "1"
 
 run_py "${MANTRA_ENV:-}" "$PYTHON_BIN" "$ROOT/ManTraNet/ManTraNet-pytorch-main/train_lzb.py" \
@@ -164,7 +171,8 @@ run_py "${MANTRA_ENV:-}" "$PYTHON_BIN" "$ROOT/ManTraNet/ManTraNet-pytorch-main/t
   --epochs 1 \
   --batch-size "$MANTRA_BATCH_SIZE" \
   --image-size "$IMAGE_SIZE" \
-  --workers 0
+  --workers 0 \
+  --seed "$SEED"
 predict_eval_smoke "ManTraNet" "${MANTRA_ENV:-}" "$ROOT/ManTraNet/ManTraNet-pytorch-main" "predict_lzb.py" "--model-file" "$WORK_DIR/checkpoints_smoke/mantranet/best.pth" "$MANTRA_BATCH_SIZE"
 
 "$PYTHON_BIN" -m lzb_experiments.summarize_results \
