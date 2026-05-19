@@ -158,6 +158,9 @@ def main():
     start_epoch = 0
     if args.resume_from:
         start_epoch, best_f1 = load_resume_checkpoint(args.resume_from, model, optimizer)
+        for group in optimizer.param_groups:
+            group["lr"] = args.lr
+        print("MVSS-Net optimizer lr set to {}".format(args.lr))
         early_best_f1 = best_f1
     last_state = None
     best_path = os.path.join(args.out_dir, "best.pth")

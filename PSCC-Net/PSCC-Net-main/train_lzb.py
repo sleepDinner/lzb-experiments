@@ -236,12 +236,14 @@ def load_resume_checkpoint(resume_from, FENet, SegNet, ClsNet, optimizer):
     return start_epoch, best_f1
 
 
-def parse_lr_strategy(value, pscc_args):
+def parse_lr_strategy(value, pscc_args, base_lr):
     value = str(value).strip()
     if not value or value.lower() in {"none", "fixed", "off"}:
         return []
     if value.lower() == "original":
-        return [float(lr) for lr in pscc_args.lr_strategy]
+        original = [float(lr) for lr in pscc_args.lr_strategy]
+        scale = float(base_lr) / original[0] if original and original[0] > 0 else 1.0
+        return [lr * scale for lr in original]
     return [float(part.strip()) for part in value.split(",") if part.strip()]
 
 
@@ -276,7 +278,7 @@ def main():
     pscc_args.defrost()
     pscc_args.crop_size = [args_cli.image_size, args_cli.image_size]
     pscc_args.freeze()
-    lr_strategy = parse_lr_strategy(args_cli.lr_strategy, pscc_args)
+    lr_strategy = parse_lr_strategy(args_cli.lr_strategy, pscc_args, args_cli.lr)
     if lr_strategy:
         stage_epochs = max(1, int(np.ceil(float(args_cli.epochs) / float(len(lr_strategy)))))
         print("PSCC-Net lr_strategy={} stage_epochs={}".format(lr_strategy, stage_epochs))
