@@ -41,6 +41,25 @@ def geometric_aug(image, mask):
     return np.ascontiguousarray(image), np.ascontiguousarray(mask)
 
 
+def light_degradation_aug(image_rgb):
+    image = np.ascontiguousarray(image_rgb)
+    aug_choice = float(np.random.random())
+    if aug_choice < 0.12:
+        sigma = float(np.random.uniform(0.2, 0.8))
+        image = cv2.GaussianBlur(image, (3, 3), sigmaX=sigma)
+    elif aug_choice < 0.27:
+        sigma = float(np.random.uniform(1.0, 3.0))
+        noise = np.random.normal(0.0, sigma, image.shape)
+        image = np.clip(image.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+    elif aug_choice < 0.40:
+        quality = int(np.random.randint(85, 101))
+        image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        ok, enc = cv2.imencode(".jpg", image_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+        if ok:
+            image = cv2.cvtColor(cv2.imdecode(enc, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+    return np.ascontiguousarray(image)
+
+
 class LZBSequence(keras.utils.Sequence):
     def __init__(self, list_file, image_size=512, batch_size=1, shuffle=True, mask_size=None):
         self.pairs = read_pairs(list_file)
@@ -74,6 +93,7 @@ class LZBSequence(keras.utils.Sequence):
                 raise FileNotFoundError(mask_path)
             if self.augment:
                 image, mask = geometric_aug(image, mask)
+                image = light_degradation_aug(image)
             image = cv2.resize(image, (self.image_size, self.image_size), interpolation=cv2.INTER_LINEAR)
             mask = cv2.resize(mask, (self.mask_size, self.mask_size), interpolation=cv2.INTER_NEAREST)
             images.append(image.astype("float32") / 255.0 * 2.0 - 1.0)
