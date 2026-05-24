@@ -12,12 +12,69 @@ apply_compat()
 
 import keras
 import numpy as np
+import tensorflow as tf
+from sklearn.metrics import roc_auc_score
 
 from lzb_data import LZBSequence
 from models import ManTraNetv3 as mm
-from utils.metrics import F1, auroc
 
 os.chdir(Path(__file__).resolve().parent)
+
+
+class SafeF1(keras.metrics.Metric):
+    def __init__(self, name="F1", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.tp = self.add_weight(name="tp", initializer="zeros")
+        self.fp = self.add_weight(name="fp", initializer="zeros")
+        self.fn = self.add_weight(name="fn", initializer="zeros")
+        self.inv_tp = self.add_weight(name="inv_tp", initializer="zeros")
+        self.inv_fp = self.add_weight(name="inv_fp", initializer="zeros")
+        self.inv_fn = self.add_weight(name="inv_fn", initializer="zeros")
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        gt = tf.cast(y_true > 0.5, tf.bool)
+        pred = tf.cast(y_pred > 0.5, tf.bool)
+        inv_pred = tf.cast((1.0 - y_pred) > 0.5, tf.bool)
+
+        self.tp.assign_add(tf.reduce_sum(tf.cast(tf.logical_and(pred, gt), tf.float32)))
+        self.fp.assign_add(tf.reduce_sum(tf.cast(tf.logical_and(pred, tf.logical_not(gt)), tf.float32)))
+        self.fn.assign_add(tf.reduce_sum(tf.cast(tf.logical_and(tf.logical_not(pred), gt), tf.float32)))
+        self.inv_tp.assign_add(tf.reduce_sum(tf.cast(tf.logical_and(inv_pred, gt), tf.float32)))
+        self.inv_fp.assign_add(tf.reduce_sum(tf.cast(tf.logical_and(inv_pred, tf.logical_not(gt)), tf.float32)))
+        self.inv_fn.assign_add(tf.reduce_sum(tf.cast(tf.logical_and(tf.logical_not(inv_pred), gt), tf.float32)))
+
+    def result(self):
+        denom = 2.0 * self.tp + self.fp + self.fn
+        inv_denom = 2.0 * self.inv_tp + self.inv_fp + self.inv_fn
+        f1 = tf.where(denom > 0.0, 2.0 * self.tp / denom, 0.0)
+        inv_f1 = tf.where(inv_denom > 0.0, 2.0 * self.inv_tp / inv_denom, 0.0)
+        return tf.maximum(f1, inv_f1)
+
+    def reset_state(self):
+        for value in (self.tp, self.fp, self.fn, self.inv_tp, self.inv_fp, self.inv_fn):
+            value.assign(0.0)
+
+    def reset_states(self):
+        self.reset_state()
+
+
+def _np_safe_auc(y_true, y_pred):
+    scores = []
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    for yy_true, yy_pred in zip(y_true, y_pred):
+        gt = (yy_true > 0.5).astype("int").ravel()
+        if gt.size == 0 or gt.min() == gt.max():
+            continue
+        pred = yy_pred.ravel()
+        this = roc_auc_score(gt, pred)
+        that = roc_auc_score(gt, 1.0 - pred)
+        scores.append(max(this, that))
+    return np.float32(np.mean(scores) if scores else 0.5)
+
+
+def auroc(y_true, y_pred):
+    return tf.py_func(_np_safe_auc, [y_true, y_pred], "float32")
 
 
 def parse_args():
@@ -239,7 +296,7 @@ def main():
     model.compile(
         optimizer=keras.optimizers.Adam(args.lr),
         loss="binary_crossentropy",
-        metrics=[F1, auroc],
+        metrics=[SafeF1(name="F1"), auroc],
     )
     last_checkpoint = LastCheckpoint(args.out_dir, save_every=args.save_last_every)
     callbacks = [
