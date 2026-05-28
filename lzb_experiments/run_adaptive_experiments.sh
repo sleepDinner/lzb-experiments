@@ -96,7 +96,7 @@ prepare() {
 is_oom_log() {
   local log_file="$1"
   grep -Eiq \
-    "CUDA out of memory|out of memory|ResourceExhaustedError|CUBLAS_STATUS_ALLOC_FAILED|CUDNN_STATUS_ALLOC_FAILED|failed to allocate|Cannot allocate memory|DefaultCPUAllocator|OOM|DataLoader worker .* is killed by signal: Killed|worker.*killed by signal|Bus error|No space left on device|shared memory" \
+    "CUDA out of memory|out of memory|ResourceExhaustedError|CUBLAS_STATUS_ALLOC_FAILED|CUDNN_STATUS_ALLOC_FAILED|failed to allocate|Cannot allocate memory|DefaultCPUAllocator|OOM|NCCL Error|broadcast_coalesced|DataLoader worker .* is killed by signal: Killed|worker.*killed by signal|Bus error|No space left on device|shared memory" \
     "$log_file"
 }
 

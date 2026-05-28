@@ -66,6 +66,7 @@ def parse_args():
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--val-batch-size", type=int, default=8)
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--workers", type=int, default=4)
@@ -184,7 +185,7 @@ def main():
     generator = torch.Generator()
     generator.manual_seed(args.seed)
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, pin_memory=True, collate_fn=mantra_collate, worker_init_fn=seed_worker, generator=generator)
-    val_loader = DataLoader(val_set, batch_size=1, shuffle=False, num_workers=max(0, args.workers // 2), pin_memory=True, collate_fn=mantra_collate, worker_init_fn=seed_worker)
+    val_loader = DataLoader(val_set, batch_size=args.val_batch_size, shuffle=False, num_workers=max(0, args.workers // 2), pin_memory=True, collate_fn=mantra_collate, worker_init_fn=seed_worker)
 
     model = load_model(args.init_weight, use_pretrain=args.use_pretrain)
     move_plain_tensors(model, device)
