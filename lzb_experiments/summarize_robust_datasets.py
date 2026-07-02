@@ -1,0 +1,70 @@
+import argparse
+import csv
+import json
+from pathlib import Path
+
+
+ORDER = ["clean", "jpeg_q100", "jpeg_q70", "jpeg_q50", "gaussian_s5", "gaussian_s10", "gaussian_s15"]
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--results-dir", required=True)
+    parser.add_argument("--out-csv", required=True)
+    args = parser.parse_args()
+
+    rows = []
+    root = Path(args.results_dir)
+    for result_file in sorted(root.rglob("*.json")):
+        rel = result_file.relative_to(root)
+        if len(rel.parts) < 3:
+            continue
+        dataset, method = rel.parts[0], rel.parts[1]
+        variant = result_file.stem
+        with open(result_file, "r", encoding="utf-8") as f:
+            item = json.load(f)
+        rows.append({
+            "dataset": dataset,
+            "method": method,
+            "variant": variant,
+            "f1_origin": item.get("f1_origin", item.get("f1")),
+            "auc_origin": item.get("auc_origin", item.get("auc")),
+            "f1_double": item.get("f1_double"),
+            "auc_double": item.get("auc_double"),
+            "f1": item.get("f1"),
+            "iou": item.get("iou"),
+            "auc": item.get("auc"),
+            "evaluated": item.get("evaluated"),
+            "missing": item.get("missing"),
+        })
+
+    order_index = {name: idx for idx, name in enumerate(ORDER)}
+    rows.sort(key=lambda r: (r["dataset"], r["method"], order_index.get(r["variant"], 999), r["variant"]))
+
+    out_csv = Path(args.out_csv)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_csv, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "dataset",
+                "method",
+                "variant",
+                "f1_origin",
+                "auc_origin",
+                "f1_double",
+                "auc_double",
+                "f1",
+                "iou",
+                "auc",
+                "evaluated",
+                "missing",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"Wrote summary: {out_csv}")
+
+
+if __name__ == "__main__":
+    main()
