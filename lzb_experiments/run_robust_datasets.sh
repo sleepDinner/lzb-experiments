@@ -12,6 +12,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 SEED="${SEED:-2026}"
 PREDICT_WORKERS="${PREDICT_WORKERS:-8}"
 ROBUST_PREP_WORKERS="${ROBUST_PREP_WORKERS:-8}"
+EVAL_WORKERS="${EVAL_WORKERS:-4}"
 SKIP_COMPLETED="${SKIP_COMPLETED:-1}"
 REBUILD_ROBUST_LISTS="${REBUILD_ROBUST_LISTS:-0}"
 
@@ -158,7 +159,8 @@ predict_one_variant() {
   "$PYTHON_BIN" -m lzb_experiments.evaluate_predictions \
     --list-file "$list_file" \
     --pred-dir "$pred_root" \
-    --out "$result_root/$variant.json"
+    --out "$result_root/$variant.json" \
+    --workers "$EVAL_WORKERS"
 }
 
 predict_dataset_method() {

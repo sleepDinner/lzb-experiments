@@ -1,10 +1,12 @@
 import argparse
 import json
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 import torch
 from sklearn.metrics import jaccard_score
+from tqdm import tqdm
 
 from lzb_experiments.common import ensure_dir, prediction_filename, read_mask, read_pairs, read_pred
 
@@ -75,7 +77,26 @@ def mean_or_nan(values):
     return float(np.mean(values)) if values else float("nan")
 
 
-def evaluate_pair_list(list_file, pred_dir, threshold=0.5):
+def evaluate_one_pair(task):
+    image_path, mask_path, pred_dir, threshold = task
+    pred_path = prediction_path(pred_dir, image_path)
+    if not pred_path.is_file():
+        return {"missing": str(pred_path)}
+    mask = read_mask(mask_path)
+    pred = read_pred(pred_path, size=mask.shape)
+    y_true = mask.reshape(-1)
+    y_score = pred.reshape(-1)
+    y_pred = (y_score > threshold).astype(np.uint8)
+    return {
+        "f1_origin": imdlbenco_pixel_f1(mask, pred, threshold=threshold, mode="origin"),
+        "f1_double": imdlbenco_pixel_f1(mask, pred, threshold=threshold, mode="double"),
+        "iou": jaccard_score(y_true, y_pred, zero_division=0),
+        "auc_origin": imdlbenco_pixel_auc(mask, pred, mode="origin"),
+        "auc_double": imdlbenco_pixel_auc(mask, pred, mode="double"),
+    }
+
+
+def evaluate_pair_list(list_file, pred_dir, threshold=0.5, workers=1):
     pairs = read_pairs(list_file)
     f1_origin_values = []
     f1_double_values = []
@@ -83,21 +104,34 @@ def evaluate_pair_list(list_file, pred_dir, threshold=0.5):
     auc_origin_values = []
     auc_double_values = []
     missing = []
-    for image_path, mask_path, _ in pairs:
-        pred_path = prediction_path(pred_dir, image_path)
-        if not pred_path.is_file():
-            missing.append(str(pred_path))
-            continue
-        mask = read_mask(mask_path)
-        pred = read_pred(pred_path, size=mask.shape)
-        y_true = mask.reshape(-1)
-        y_score = pred.reshape(-1)
-        y_pred = (y_score > threshold).astype(np.uint8)
-        f1_origin_values.append(imdlbenco_pixel_f1(mask, pred, threshold=threshold, mode="origin"))
-        f1_double_values.append(imdlbenco_pixel_f1(mask, pred, threshold=threshold, mode="double"))
-        iou_values.append(jaccard_score(y_true, y_pred, zero_division=0))
-        auc_origin_values.append(imdlbenco_pixel_auc(mask, pred, mode="origin"))
-        auc_double_values.append(imdlbenco_pixel_auc(mask, pred, mode="double"))
+    tasks = [(image_path, mask_path, str(pred_dir), threshold) for image_path, mask_path, _ in pairs]
+    worker_count = max(1, int(workers))
+    desc = f"Evaluating {Path(pred_dir).name}"
+    if worker_count == 1:
+        iterator = (evaluate_one_pair(task) for task in tasks)
+        results = tqdm(iterator, total=len(tasks), desc=desc)
+        for item in results:
+            if "missing" in item:
+                missing.append(item["missing"])
+                continue
+            f1_origin_values.append(item["f1_origin"])
+            f1_double_values.append(item["f1_double"])
+            iou_values.append(item["iou"])
+            auc_origin_values.append(item["auc_origin"])
+            auc_double_values.append(item["auc_double"])
+    else:
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            futures = [executor.submit(evaluate_one_pair, task) for task in tasks]
+            for future in tqdm(as_completed(futures), total=len(futures), desc=desc):
+                item = future.result()
+                if "missing" in item:
+                    missing.append(item["missing"])
+                    continue
+                f1_origin_values.append(item["f1_origin"])
+                f1_double_values.append(item["f1_double"])
+                iou_values.append(item["iou"])
+                auc_origin_values.append(item["auc_origin"])
+                auc_double_values.append(item["auc_double"])
 
     result = {
         "list_file": str(list_file),
@@ -113,6 +147,7 @@ def evaluate_pair_list(list_file, pred_dir, threshold=0.5):
         "auc_origin": mean_or_nan(auc_origin_values),
         "auc_double": mean_or_nan(auc_double_values),
         "threshold": threshold,
+        "workers": worker_count,
         "metric_impl": "IMDLBenCo PixelF1/PixelAUC",
         "metric_modes": ["origin", "double"],
     }
@@ -127,9 +162,10 @@ def main():
     parser.add_argument("--pred-dir", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--workers", type=int, default=1)
     args = parser.parse_args()
 
-    result = evaluate_pair_list(args.list_file, args.pred_dir, threshold=args.threshold)
+    result = evaluate_pair_list(args.list_file, args.pred_dir, threshold=args.threshold, workers=args.workers)
     ensure_dir(Path(args.out).parent)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
