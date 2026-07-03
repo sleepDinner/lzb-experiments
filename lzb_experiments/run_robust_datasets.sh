@@ -10,7 +10,8 @@ PROFILE_FILE="${PROFILE_FILE:-$WORK_DIR/summary/adaptive_selected_profiles.tsv}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 SEED="${SEED:-2026}"
-PREDICT_WORKERS="${PREDICT_WORKERS:-4}"
+PREDICT_WORKERS="${PREDICT_WORKERS:-8}"
+ROBUST_PREP_WORKERS="${ROBUST_PREP_WORKERS:-8}"
 SKIP_COMPLETED="${SKIP_COMPLETED:-1}"
 REBUILD_ROBUST_LISTS="${REBUILD_ROBUST_LISTS:-0}"
 
@@ -207,6 +208,7 @@ prepare_args=(
   --work-dir "$WORK_DIR"
   --datasets "$ROBUST_DATASETS"
   --seed "$SEED"
+  --workers "$ROBUST_PREP_WORKERS"
 )
 if [[ "$REBUILD_ROBUST_LISTS" == "1" ]]; then
   prepare_args+=(--rebuild)

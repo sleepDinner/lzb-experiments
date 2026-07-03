@@ -65,6 +65,7 @@ def main():
         help="Comma or space separated dataset names from the test json.",
     )
     parser.add_argument("--rebuild", action="store_true", help="Regenerate robust images/lists even if they already exist.")
+    parser.add_argument("--workers", type=int, default=8, help="Parallel workers for image-only robust variant generation.")
     args = parser.parse_args()
 
     dataset_names = parse_names(args.datasets)
@@ -87,8 +88,9 @@ def main():
         if not args.rebuild and robust_lists_ready(list_dir, dataset_name):
             print(f"Reusing robust lists for {dataset_name}")
             continue
-        print(f"Creating robust lists for {dataset_name} from {source_list}")
-        create_robust_lists(source_list, list_dir, dataset_name=dataset_name, seed=args.seed)
+        print(f"Creating image-only robust lists for {dataset_name} from {source_list} with workers={args.workers}")
+        print("Masks are not generated or copied; robust lists keep the original mask paths.")
+        create_robust_lists(source_list, list_dir, dataset_name=dataset_name, seed=args.seed, workers=args.workers)
 
     write_filter_report(list_dir, skipped_records)
     print(f"Prepared robust lists for: {', '.join(dataset_names)}")

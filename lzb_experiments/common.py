@@ -4,10 +4,12 @@ import hashlib
 import json
 import os
 import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import cv2
 import numpy as np
+from tqdm import tqdm
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
@@ -224,7 +226,23 @@ def make_noise_variant(image_bgr, sigma, seed):
     return out.astype(np.uint8)
 
 
-def create_robust_lists(source_list, out_dir, dataset_name="Casiav1", seed=2026):
+def _create_robust_image(task):
+    kind, value, variant_name, idx, image_path, mask_path, label, image_out_dir, seed, reuse_existing = task
+    ext = ".jpg" if kind == "jpeg" else ".png"
+    out_image = Path(image_out_dir) / f"{unique_stem(image_path)}{ext}"
+    if not (reuse_existing and out_image.is_file()):
+        image = imread_color(image_path)
+        if kind == "jpeg":
+            perturbed = make_jpeg_variant(image, value)
+        else:
+            perturbed = make_noise_variant(image, value, seed + idx)
+        ok = cv2.imwrite(str(out_image), perturbed)
+        if not ok:
+            raise RuntimeError(f"Failed to write robust image: {out_image}")
+    return idx, str(out_image), mask_path, label
+
+
+def create_robust_lists(source_list, out_dir, dataset_name="Casiav1", seed=2026, workers=1, reuse_existing=True):
     pairs = read_pairs(source_list)
     out_dir = Path(out_dir)
     variants = []
@@ -233,20 +251,25 @@ def create_robust_lists(source_list, out_dir, dataset_name="Casiav1", seed=2026)
 
     written = {}
     for kind, value, variant_name in variants:
-        variant_pairs = []
         image_out_dir = out_dir / "robust_images" / dataset_name / variant_name / "images"
         ensure_dir(image_out_dir)
-        for idx, (image_path, mask_path, label) in enumerate(pairs):
-            image = imread_color(image_path)
-            if kind == "jpeg":
-                perturbed = make_jpeg_variant(image, value)
-                ext = ".jpg"
-            else:
-                perturbed = make_noise_variant(image, value, seed + idx)
-                ext = ".png"
-            out_image = image_out_dir / f"{unique_stem(image_path)}{ext}"
-            cv2.imwrite(str(out_image), perturbed)
-            variant_pairs.append((str(out_image), mask_path, label))
+        tasks = [
+            (kind, value, variant_name, idx, image_path, mask_path, label, str(image_out_dir), seed, reuse_existing)
+            for idx, (image_path, mask_path, label) in enumerate(pairs)
+        ]
+        results = []
+        worker_count = max(1, int(workers))
+        desc = f"{dataset_name} {variant_name}"
+        if worker_count == 1:
+            iterator = (_create_robust_image(task) for task in tasks)
+            results = list(tqdm(iterator, total=len(tasks), desc=desc))
+        else:
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = [executor.submit(_create_robust_image, task) for task in tasks]
+                for future in tqdm(as_completed(futures), total=len(futures), desc=desc):
+                    results.append(future.result())
+        results.sort(key=lambda item: item[0])
+        variant_pairs = [(out_image, mask_path, label) for _idx, out_image, mask_path, label in results]
         list_path = out_dir / "robust" / f"{dataset_name}_{variant_name}.txt"
         write_pairs(list_path, variant_pairs)
         write_mvss_list(out_dir / "robust_mvss" / f"{dataset_name}_{variant_name}.txt", variant_pairs)
